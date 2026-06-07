@@ -1,11 +1,11 @@
 {
-    "name": "llmshell",
-    "short_name": "llmshell",
+    "name": "AItty",
+    "short_name": "AItty",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Mobile SSH client for VPS management.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

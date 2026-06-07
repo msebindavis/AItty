@@ -1,4 +1,4 @@
-# llmshell (Obsidian SSH)
+# AItty
 
 Mobile SSH client for VPS management. See [REQUIREMENTS.md](REQUIREMENTS.md) for the full product spec.
 

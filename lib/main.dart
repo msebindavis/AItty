@@ -12,5 +12,5 @@ Future<void> main() async {
     GoogleFonts.jetBrainsMono(),
   ]);
   InteractionLogger.install();
-  runApp(const ProviderScope(child: LlmshellApp()));
+  runApp(const ProviderScope(child: AiTtyApp()));
 }

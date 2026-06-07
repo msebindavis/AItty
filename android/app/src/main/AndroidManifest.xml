@@ -6,7 +6,7 @@
     <application
         android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="true"
-        android:label="llmshell"
+        android:label="AItty"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

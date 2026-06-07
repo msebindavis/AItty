@@ -39,8 +39,8 @@ class SettingsScreen extends StatelessWidget {
           ),
           _SettingsTile(
             icon: Icons.info_outline,
-            title: 'About Obsidian SSH',
-            subtitle: 'llmshell.AI v1.0.0',
+            title: 'About AItty',
+            subtitle: 'AItty v1.0.0',
             onTap: () {},
           ),
         ],

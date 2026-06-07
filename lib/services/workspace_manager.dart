@@ -245,7 +245,7 @@ class WorkspaceManager extends ChangeNotifier {
       } else {
         conn.write(
           pane.channelId,
-          'echo "[llmshell] tmux not found — using plain shell."\n',
+          'echo "[AItty] tmux not found — using plain shell."\n',
         );
       }
     }

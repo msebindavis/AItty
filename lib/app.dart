@@ -6,8 +6,8 @@ import 'router/app_router.dart';
 import 'utils/interaction_logger.dart';
 import 'widgets/session_lifecycle_scope.dart';
 
-class LlmshellApp extends ConsumerWidget {
-  const LlmshellApp({super.key});
+class AiTtyApp extends ConsumerWidget {
+  const AiTtyApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -15,7 +15,7 @@ class LlmshellApp extends ConsumerWidget {
     return InteractionLogScope(
       child: SessionLifecycleScope(
         child: MaterialApp.router(
-          title: 'Obsidian SSH',
+          title: 'AItty',
           debugShowCheckedModeBanner: false,
           theme: ObsidianTheme.dark(),
           routerConfig: router,

@@ -1,4 +1,4 @@
-package com.llmshell.llmshell
+package ai.aitty.app
 
 import android.content.Intent
 import android.os.Build
@@ -11,7 +11,7 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "com.llmshell.llmshell/foreground",
+            "ai.aitty.app/foreground",
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "start" -> {

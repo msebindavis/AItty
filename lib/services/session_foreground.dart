@@ -8,7 +8,7 @@ import 'package:flutter/services.dart';
 /// service (with a persistent notification) tells Android the connection is
 /// active work that should not be killed.
 class SessionForeground {
-  static const _channel = MethodChannel('com.llmshell.llmshell/foreground');
+  static const _channel = MethodChannel('ai.aitty.app/foreground');
 
   static Future<void> start(int sessionCount) async {
     if (!Platform.isAndroid || sessionCount <= 0) return;

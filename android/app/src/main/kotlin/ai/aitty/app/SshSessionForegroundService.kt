@@ -1,4 +1,4 @@
-package com.llmshell.llmshell
+package ai.aitty.app
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -39,7 +39,7 @@ class SshSessionForegroundService : Service() {
         )
         val label = if (sessionCount == 1) "1 SSH session active" else "$sessionCount SSH sessions active"
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("llmshell")
+            .setContentTitle("AItty")
             .setContentText(label)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(openApp)
@@ -68,6 +68,6 @@ class SshSessionForegroundService : Service() {
         const val CHANNEL_ID = "ssh_session"
         const val NOTIFICATION_ID = 1001
         const val EXTRA_COUNT = "count"
-        const val ACTION_STOP = "com.llmshell.llmshell.STOP_FOREGROUND"
+        const val ACTION_STOP = "ai.aitty.app.STOP_FOREGROUND"
     }
 }

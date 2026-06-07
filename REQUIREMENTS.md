@@ -1,7 +1,6 @@
-# llmshell.AI — Product & Screen Requirements
+# AItty — Product & Screen Requirements
 
 **Product:** A native cross-platform (Flutter) SSH client for connecting to and managing remote Linux VPS hosts from a mobile device.
-**Codename:** Obsidian SSH
 **Design system:** "Obsidian Deep" (dark, developer-focused, Material 3 tonal layering)
 **Primary platform:** Flutter (iOS + Android phones first; tablet/desktop layouts described where the source screens define them).
 
@@ -9,7 +8,7 @@
 
 ## 1. Overview & Vision
 
-llmshell.AI is a premium, mobile-first SSH terminal client aimed at developers and infrastructure engineers who manage VPS / cloud servers on the go. It moves beyond a bare terminal emulator and treats each remote host as a workspace that can hold multiple concurrent **tabs**: terminal sessions, SFTP file browsers, in-app web previews (e.g. `localhost:3000`), and git diff views.
+AItty is a premium, mobile-first SSH terminal client aimed at developers and infrastructure engineers who manage VPS / cloud servers on the go. It moves beyond a bare terminal emulator and treats each remote host as a workspace that can hold multiple concurrent **tabs**: terminal sessions, SFTP file browsers, in-app web previews (e.g. `localhost:3000`), and git diff views.
 
 The experience is designed to make typing real shell commands on a phone genuinely usable through:
 
