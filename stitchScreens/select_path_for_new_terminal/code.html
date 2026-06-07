@@ -1,0 +1,213 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Select Path - SSH Client</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "tertiary": "#d5bbff",
+                        "surface-tint": "#a2c9ff",
+                        "on-surface": "#dfe2eb",
+                        "error-container": "#93000a",
+                        "surface-container-low": "#181c22",
+                        "surface-container-highest": "#31353c",
+                        "outline-variant": "#414752",
+                        "secondary-fixed-dim": "#67df70",
+                        "surface": "#10141a",
+                        "inverse-surface": "#dfe2eb",
+                        "secondary-fixed": "#83fc89",
+                        "on-primary-fixed": "#001c38",
+                        "on-background": "#dfe2eb",
+                        "surface-container": "#1c2026",
+                        "background": "#10141a",
+                        "on-tertiary-fixed-variant": "#5a21ab",
+                        "on-secondary": "#00390d",
+                        "on-error-container": "#ffdad6",
+                        "surface-bright": "#353940",
+                        "on-error": "#690005",
+                        "on-secondary-fixed": "#002105",
+                        "tertiary-fixed": "#ecdcff",
+                        "secondary-container": "#27a640",
+                        "error": "#ffb4ab",
+                        "surface-container-high": "#262a31",
+                        "inverse-primary": "#0060aa",
+                        "on-tertiary-container": "#4c069d",
+                        "surface-container-lowest": "#0a0e14",
+                        "primary": "#a2c9ff",
+                        "on-tertiary-fixed": "#270058",
+                        "primary-fixed": "#d3e4ff",
+                        "on-primary-fixed-variant": "#004882",
+                        "primary-container": "#58a6ff",
+                        "surface-variant": "#31353c",
+                        "on-tertiary": "#41008b",
+                        "on-primary": "#00315c",
+                        "inverse-on-surface": "#2d3137",
+                        "secondary": "#67df70",
+                        "primary-fixed-dim": "#a2c9ff",
+                        "on-secondary-fixed-variant": "#005317",
+                        "tertiary-fixed-dim": "#d5bbff",
+                        "outline": "#8b919d",
+                        "on-surface-variant": "#c0c7d4",
+                        "on-secondary-container": "#00320a",
+                        "on-primary-container": "#003a6b",
+                        "surface-dim": "#10141a",
+                        "tertiary-container": "#b88eff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-mobile": "16px",
+                        "sm": "8px",
+                        "md": "16px",
+                        "base": "4px",
+                        "margin-desktop": "48px",
+                        "lg": "24px",
+                        "gutter": "16px",
+                        "xs": "4px",
+                        "xl": "32px"
+                    },
+                    "fontFamily": {
+                        "label-mono-md": ["JetBrains Mono"],
+                        "body-md": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "label-mono-sm": ["JetBrains Mono"],
+                        "headline-md": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "body-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-mono-md": ["14px", { "lineHeight": "20px", "fontWeight": "500" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "500" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "label-mono-sm": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "headline-lg-mobile": ["26px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { background-color: #0D1117; } /* Deep background override for this specific theme requirement outside of config standard background */
+        .glass-panel {
+            background: rgba(22, 27, 34, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(48, 54, 61, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md antialiased min-h-screen flex flex-col relative pb-24">
+<!-- TopAppBar -->
+<header class="bg-surface dark:bg-surface font-headline-sm text-headline-sm flex items-center justify-between px-margin-mobile w-full h-16 sticky top-0 z-40">
+<button class="text-on-surface-variant hover:bg-surface-container-high transition-colors active:scale-95 duration-100 p-2 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="arrow_back">arrow_back</span>
+</button>
+<h1 class="font-headline-md text-headline-md font-semibold text-on-surface flex-1 text-center">Select Path</h1>
+
+</header>
+<!-- Main Canvas -->
+<main class="flex-1 px-margin-mobile py-md flex flex-col gap-md max-w-3xl mx-auto w-full">
+<!-- Breadcrumb -->
+<nav class="bg-surface-container-low border border-outline-variant rounded-lg p-sm flex items-center gap-xs overflow-x-auto whitespace-nowrap scrollbar-hide">
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1">
+<span class="material-symbols-outlined text-[18px]" data-icon="home">home</span>
+</button>
+<span class="text-outline-variant font-label-mono-sm text-label-mono-sm">/</span>
+<button class="font-label-mono-sm text-label-mono-sm text-on-surface-variant hover:text-primary transition-colors px-1">ubuntu</button>
+<span class="text-outline-variant font-label-mono-sm text-label-mono-sm">/</span>
+<button class="font-label-mono-sm text-label-mono-sm text-on-surface-variant hover:text-primary transition-colors px-1">projects</button>
+<span class="text-outline-variant font-label-mono-sm text-label-mono-sm">/</span>
+<button class="font-label-mono-sm text-label-mono-sm text-primary px-1">api-service</button>
+</nav>
+<!-- List View -->
+<div class="bg-surface border border-outline-variant rounded-xl overflow-hidden flex flex-col">
+<!-- Active Folder Item -->
+<button class="w-full flex items-center gap-md p-md bg-surface-container-high border-b border-outline-variant/30 hover:bg-surface-container-highest transition-colors text-left group">
+<div class="p-2 bg-primary/10 rounded-lg text-primary flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="folder" data-weight="fill" style="font-variation-settings: 'FILL' 1;">folder</span>
+</div>
+<div class="flex-1 flex flex-col">
+<span class="font-label-mono-md text-label-mono-md text-primary">src</span>
+<span class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">4 items • Modified Today</span>
+</div>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</button>
+<!-- Regular Folder Items -->
+<button class="w-full flex items-center gap-md p-md border-b border-outline-variant/30 hover:bg-surface-container-low transition-colors text-left group">
+<div class="p-2 text-on-surface-variant rounded-lg flex items-center justify-center group-hover:text-on-surface group-hover:bg-surface-container-highest transition-all">
+<span class="material-symbols-outlined" data-icon="folder_open">folder_open</span>
+</div>
+<div class="flex-1 flex flex-col">
+<span class="font-label-mono-md text-label-mono-md text-on-surface">tests</span>
+<span class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">12 items • Modified Yesterday</span>
+</div>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface transition-colors" data-icon="chevron_right">chevron_right</span>
+</button>
+<button class="w-full flex items-center gap-md p-md border-b border-outline-variant/30 hover:bg-surface-container-low transition-colors text-left group">
+<div class="p-2 text-on-surface-variant rounded-lg flex items-center justify-center group-hover:text-on-surface group-hover:bg-surface-container-highest transition-all">
+<span class="material-symbols-outlined" data-icon="folder_open">folder_open</span>
+</div>
+<div class="flex-1 flex flex-col">
+<span class="font-label-mono-md text-label-mono-md text-on-surface">docs</span>
+<span class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">2 items • Modified 3 days ago</span>
+</div>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface transition-colors" data-icon="chevron_right">chevron_right</span>
+</button>
+<button class="w-full flex items-center gap-md p-md border-b border-outline-variant/30 hover:bg-surface-container-low transition-colors text-left group">
+<div class="p-2 text-on-surface-variant rounded-lg flex items-center justify-center group-hover:text-on-surface group-hover:bg-surface-container-highest transition-all">
+<span class="material-symbols-outlined" data-icon="folder_open">folder_open</span>
+</div>
+<div class="flex-1 flex flex-col">
+<span class="font-label-mono-md text-label-mono-md text-on-surface">node_modules</span>
+<span class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">843 items • Modified last week</span>
+</div>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface transition-colors" data-icon="chevron_right">chevron_right</span>
+</button>
+<!-- File Items (Grayed out/Disabled style for folder selection) -->
+<div class="w-full flex items-center gap-md p-md border-b border-outline-variant/30 opacity-60">
+<div class="p-2 text-outline rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="description">description</span>
+</div>
+<div class="flex-1 flex flex-col">
+<span class="font-label-mono-md text-label-mono-md text-outline">.env</span>
+<span class="font-label-mono-sm text-label-mono-sm text-outline">1.2 KB • Hidden file</span>
+</div>
+</div>
+<div class="w-full flex items-center gap-md p-md opacity-60">
+<div class="p-2 text-outline rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="data_object">data_object</span>
+</div>
+<div class="flex-1 flex flex-col">
+<span class="font-label-mono-md text-label-mono-md text-outline">package.json</span>
+<span class="font-label-mono-sm text-label-mono-sm text-outline">2.4 KB • JSON config</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Floating Action Button -->
+<div class="fixed bottom-24 right-margin-mobile z-40 md:right-[calc(50%-360px+16px)]">
+<button class="bg-primary text-on-primary-fixed flex items-center gap-sm px-lg py-sm rounded-full shadow-[0_8px_24px_rgba(162,201,255,0.2)] hover:bg-primary-fixed transition-colors active:scale-95 duration-200">
+<span class="material-symbols-outlined" data-icon="check_circle">check_circle</span>
+<span class="font-label-mono-md text-label-mono-md font-bold">Select 'src'</span>
+</button>
+</div>
+<!-- BottomNavBar (Hidden on md and above per rules, but included as requested) -->
+
+
+
+</body></html>

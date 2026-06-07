@@ -1,0 +1,210 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Connections - Mobile SSH Client</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "tertiary-fixed-dim": "#d5bbff",
+                        "on-secondary-container": "#00320a",
+                        "surface-container-low": "#181c22",
+                        "inverse-surface": "#dfe2eb",
+                        "on-secondary-fixed-variant": "#005317",
+                        "error": "#ffb4ab",
+                        "primary-fixed": "#d3e4ff",
+                        "outline-variant": "#414752",
+                        "primary": "#a2c9ff",
+                        "on-primary-fixed-variant": "#004882",
+                        "tertiary": "#d5bbff",
+                        "surface-container-high": "#262a31",
+                        "on-surface-variant": "#c0c7d4",
+                        "secondary-fixed-dim": "#67df70",
+                        "on-error": "#690005",
+                        "on-background": "#dfe2eb",
+                        "surface-container-highest": "#31353c",
+                        "secondary": "#67df70",
+                        "surface-container-lowest": "#0a0e14",
+                        "on-secondary-fixed": "#002105",
+                        "on-surface": "#dfe2eb",
+                        "inverse-on-surface": "#2d3137",
+                        "primary-fixed-dim": "#a2c9ff",
+                        "secondary-container": "#27a640",
+                        "secondary-fixed": "#83fc89",
+                        "on-tertiary-fixed": "#270058",
+                        "on-tertiary-container": "#4c069d",
+                        "on-secondary": "#00390d",
+                        "on-error-container": "#ffdad6",
+                        "outline": "#8b919d",
+                        "surface-container": "#1c2026",
+                        "primary-container": "#58a6ff",
+                        "on-tertiary-fixed-variant": "#5a21ab",
+                        "surface-tint": "#a2c9ff",
+                        "surface": "#10141a",
+                        "surface-bright": "#353940",
+                        "surface-variant": "#31353c",
+                        "on-primary-container": "#003a6b",
+                        "inverse-primary": "#0060aa",
+                        "surface-dim": "#10141a",
+                        "tertiary-fixed": "#ecdcff",
+                        "on-primary-fixed": "#001c38",
+                        "error-container": "#93000a",
+                        "on-primary": "#00315c",
+                        "tertiary-container": "#b88eff",
+                        "on-tertiary": "#41008b",
+                        "background": "#10141a"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-desktop": "48px",
+                        "sm": "8px",
+                        "gutter": "16px",
+                        "xl": "32px",
+                        "xs": "4px",
+                        "md": "16px",
+                        "lg": "24px",
+                        "base": "4px",
+                        "margin-mobile": "16px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "label-mono-sm": ["JetBrains Mono"],
+                        "body-lg": ["Inter"],
+                        "label-mono-md": ["JetBrains Mono"],
+                        "headline-sm": ["Inter"]
+                    },
+                    "fontSize": {
+                        "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "headline-lg-mobile": ["26px", {"lineHeight": "32px", "fontWeight": "600"}],
+                        "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                        "label-mono-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}],
+                        "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "label-mono-md": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                        "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "500"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { background-color: #0D1117; } /* Level 0 Background */
+        .card-surface { background-color: #161B22; border-color: #30363D; } /* Level 1 Surface */
+        .popover-surface { background-color: #21262D; } /* Level 2 Popover */
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-background text-on-surface h-screen w-screen overflow-hidden flex flex-col font-body-md">
+<!-- TopAppBar -->
+
+<!-- Tab Bar Area -->
+<div class="card-surface border-b border-x-0 border-t-0 flex items-center px-2 py-1 shrink-0 relative z-20 h-12">
+<div class="flex-1 overflow-x-auto hide-scrollbar flex items-center gap-1"><!-- Menu Tab -->
+<button class="flex items-center justify-center p-2 mr-2 rounded-lg bg-surface-container-high/40 backdrop-blur-md border border-outline-variant/30 text-primary-fixed-dim hover:bg-surface-variant transition-all active:scale-95" aria-label="Go back">
+  <span class="material-symbols-outlined text-[20px]" data-icon="arrow_back">arrow_back</span>
+</button>
+<!-- Active Tab -->
+<button class="bg-surface-container-high text-primary-fixed-dim px-3 py-1.5 rounded-md flex items-center gap-2 min-w-fit shadow-sm border border-outline-variant/30">
+<span class="material-symbols-outlined text-[16px]" data-icon="terminal">terminal</span>
+<span class="font-label-mono-sm text-label-mono-sm">web-prod-01</span>
+<span class="material-symbols-outlined text-[14px] hover:text-error ml-1" data-icon="close">close</span>
+</button>
+<!-- Inactive Tab -->
+<button class="text-on-surface-variant hover:bg-surface-variant px-3 py-1.5 rounded-md flex items-center gap-2 min-w-fit transition-colors">
+<span class="material-symbols-outlined text-[16px]" data-icon="folder">folder</span>
+<span class="font-label-mono-sm text-label-mono-sm">db-backup-dir</span>
+<span class="material-symbols-outlined text-[14px] hover:text-error ml-1 opacity-0 group-hover:opacity-100" data-icon="close">close</span>
+</button>
+</div>
+<!-- Add Button & Dropdown -->
+<div class="relative ml-2 shrink-0">
+<button class="text-on-surface hover:bg-surface-variant p-1.5 rounded-md transition-colors bg-surface-variant/50 border border-outline-variant/50 active:scale-95 duration-100" id="add-tab-btn">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+</button>
+<!-- Dropdown Menu (Shown) -->
+<div class="popover-surface absolute top-full right-0 mt-1 w-48 rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)] border border-outline-variant/30 py-1 z-50 flex flex-col" id="add-dropdown">
+<button class="text-left px-3 py-2 hover:bg-surface-variant text-on-surface flex items-center gap-2 font-body-md text-body-md transition-colors w-full">
+<span class="material-symbols-outlined text-[18px] text-primary" data-icon="terminal">terminal</span>
+                    New Terminal
+                </button>
+<button class="text-left px-3 py-2 hover:bg-surface-variant text-on-surface flex items-center gap-2 font-body-md text-body-md transition-colors w-full">
+<span class="material-symbols-outlined text-[18px] text-tertiary" data-icon="folder_open">folder_open</span>
+                    New File Browser
+                </button>
+<button class="text-left px-3 py-2 hover:bg-surface-variant text-on-surface flex items-center gap-2 font-body-md text-body-md transition-colors w-full">
+<span class="material-symbols-outlined text-[18px] text-secondary" data-icon="language">language</span>
+                    New Browser
+                </button>
+<button class="text-left px-3 py-2 hover:bg-surface-variant text-on-surface flex items-center gap-2 font-body-md text-body-md transition-colors w-full">
+<span class="material-symbols-outlined text-[18px] text-error" data-icon="difference">difference</span>
+                    New Git Diff
+                </button>
+</div>
+</div>
+</div>
+<!-- Main Content Area (Terminal) -->
+<main class="flex-1 overflow-y-auto bg-background p-gutter font-label-mono-sm text-label-mono-sm text-on-surface-variant">
+<div class="opacity-70 mb-4">
+            Last login: Tue Oct 24 10:23:41 2023 from 192.168.1.5<br>
+            Linux web-prod-01 5.15.0-87-generic #97-Ubuntu SMP Mon Oct 2 21:25:23 UTC 2023 x86_64<br>
+<br>
+            Welcome to Ubuntu 22.04.3 LTS (GNU/Linux 5.15.0-87-generic x86_64)<br>
+</div>
+<div class="mb-2 flex items-center">
+<span class="text-secondary mr-2">admin@web-prod-01</span>
+<span class="text-primary mr-2">~/var/www/html</span>
+<span class="">$</span>
+<span class="ml-2 text-on-surface">ls -la</span>
+</div>
+<div class="mb-4 text-on-surface-variant whitespace-pre">
+total 32
+drwxr-xr-x 4 www-data www-data 4096 Oct 24 09:15 .
+drwxr-xr-x 3 root     root     4096 Oct 20 14:22 ..
+-rw-r--r-- 1 www-data www-data  421 Oct 24 09:15 index.html
+drwxr-xr-x 2 www-data www-data 4096 Oct 20 14:23 assets
+drwxr-xr-x 5 www-data www-data 4096 Oct 22 11:40 api
+-rw-r--r-- 1 www-data www-data 1024 Oct 20 14:23 config.php
+        </div>
+<div class="mb-2 flex items-center">
+<span class="text-secondary mr-2">admin@web-prod-01</span>
+<span class="text-primary mr-2">~/var/www/html</span>
+<span class="">$</span>
+<span class="ml-2 text-on-surface flex items-center">tail -f /var/log/nginx/access.log<span class="inline-block w-2 h-4 bg-primary ml-1 animate-pulse"></span></span>
+</div>
+</main>
+<!-- BottomNavBar -->
+
+<script>
+        // Simple JS for toggling the dropdown for demonstration
+        document.getElementById('add-tab-btn').addEventListener('click', function(e) {
+            const dropdown = document.getElementById('add-dropdown');
+            dropdown.classList.toggle('hidden');
+            e.stopPropagation();
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            const dropdown = document.getElementById('add-dropdown');
+            if (!dropdown.classList.contains('hidden')) {
+                dropdown.classList.add('hidden');
+            }
+        });
+    </script>
+
+
+</body></html>

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Select Host - Terminal Hosts</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-error": "#690005",
+                        "surface-tint": "#a2c9ff",
+                        "inverse-surface": "#dfe2eb",
+                        "tertiary-container": "#b88eff",
+                        "surface-container-lowest": "#0a0e14",
+                        "inverse-primary": "#0060aa",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-low": "#181c22",
+                        "error-container": "#93000a",
+                        "on-secondary-fixed": "#002105",
+                        "on-primary-container": "#003a6b",
+                        "tertiary": "#d5bbff",
+                        "secondary-fixed-dim": "#67df70",
+                        "on-tertiary": "#41008b",
+                        "surface-variant": "#31353c",
+                        "on-tertiary-fixed-variant": "#5a21ab",
+                        "outline": "#8b919d",
+                        "on-primary-fixed": "#001c38",
+                        "background": "#10141a",
+                        "tertiary-fixed-dim": "#d5bbff",
+                        "primary-fixed-dim": "#a2c9ff",
+                        "surface": "#10141a",
+                        "inverse-on-surface": "#2d3137",
+                        "error": "#ffb4ab",
+                        "tertiary-fixed": "#ecdcff",
+                        "primary": "#a2c9ff",
+                        "outline-variant": "#414752",
+                        "on-surface": "#dfe2eb",
+                        "secondary-fixed": "#83fc89",
+                        "surface-bright": "#353940",
+                        "on-background": "#dfe2eb",
+                        "secondary-container": "#27a640",
+                        "on-secondary-fixed-variant": "#005317",
+                        "surface-container": "#1c2026",
+                        "on-tertiary-fixed": "#270058",
+                        "secondary": "#67df70",
+                        "primary-fixed": "#d3e4ff",
+                        "surface-container-high": "#262a31",
+                        "on-secondary": "#00390d",
+                        "on-tertiary-container": "#4c069d",
+                        "on-primary": "#00315c",
+                        "surface-container-highest": "#31353c",
+                        "primary-container": "#58a6ff",
+                        "on-surface-variant": "#c0c7d4",
+                        "surface-dim": "#10141a",
+                        "on-secondary-container": "#00320a",
+                        "on-primary-fixed-variant": "#004882"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "xl": "32px",
+                        "xs": "4px",
+                        "base": "4px",
+                        "sm": "8px",
+                        "lg": "24px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px",
+                        "md": "16px",
+                        "margin-desktop": "48px"
+                    },
+                    "fontFamily": {
+                        "label-mono-md": ["JetBrains Mono"],
+                        "headline-lg-mobile": ["Inter"],
+                        "label-mono-sm": ["JetBrains Mono"],
+                        "headline-md": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "body-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-mono-md": ["14px", { "lineHeight": "20px", "fontWeight": "500" }],
+                        "headline-lg-mobile": ["26px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "label-mono-sm": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "500" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background min-h-screen flex flex-col font-body-md antialiased pb-20">
+<!-- TopAppBar -->
+<header class="w-full sticky top-0 z-50 bg-surface dark:bg-surface border-b border-outline-variant dark:border-outline-variant flat no shadows transition-colors duration-200">
+<div class="flex items-center justify-between px-margin-mobile w-full h-16">
+<button class="text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/50 dark:hover:bg-surface-variant/50 p-2 rounded-full transition-colors duration-200">
+<span class="material-symbols-outlined" data-weight="fill">terminal</span>
+</button>
+<h1 class="font-headline-md text-headline-md font-semibold text-primary dark:text-primary">Terminal Hosts</h1>
+<button class="text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-variant/50 dark:hover:bg-surface-variant/50 p-2 rounded-full transition-colors duration-200">
+<span class="material-symbols-outlined">add</span>
+</button>
+</div>
+<!-- Search Bar -->
+<div class="px-margin-mobile pb-4">
+<div class="relative w-full">
+<div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-on-surface-variant">
+<span class="material-symbols-outlined">search</span>
+</div>
+<input class="block w-full p-3 pl-10 text-body-md bg-surface-container-high border border-outline-variant rounded-lg text-on-surface focus:ring-primary focus:border-primary placeholder-on-surface-variant transition-colors" placeholder="Search hosts or groups..." type="text"/>
+</div>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-grow px-margin-mobile py-lg w-full max-w-4xl mx-auto space-y-xl">
+<!-- Recent Section (Bento Grid Style) -->
+<section>
+<h2 class="font-headline-sm text-headline-sm text-on-surface mb-md">Recent</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+<!-- Card 1 -->
+<button class="group relative flex flex-col items-start p-md bg-surface-container rounded-xl border border-outline-variant hover:border-primary transition-colors text-left w-full">
+<div class="flex w-full justify-between items-start mb-sm">
+<div class="p-2 bg-primary/10 text-primary rounded-lg">
+<span class="material-symbols-outlined">dns</span>
+</div>
+<div class="flex items-center space-x-1 px-2 py-1 bg-secondary/10 text-secondary rounded-full">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+<span class="font-label-mono-sm text-label-mono-sm">Online</span>
+</div>
+</div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface group-hover:text-primary transition-colors">Web Server Alpha</h3>
+<p class="font-label-mono-md text-label-mono-md text-on-surface-variant mt-1">192.168.1.100</p>
+<div class="mt-4 text-xs text-on-surface-variant font-label-mono-sm">
+<span class="px-2 py-1 bg-surface-container-high rounded text-on-surface-variant">ubuntu</span>
+<span class="px-2 py-1 bg-surface-container-high rounded text-on-surface-variant ml-2">ssh -i key.pem</span>
+</div>
+</button>
+<!-- Card 2 -->
+<button class="group relative flex flex-col items-start p-md bg-surface-container rounded-xl border border-outline-variant hover:border-primary transition-colors text-left w-full">
+<div class="flex w-full justify-between items-start mb-sm">
+<div class="p-2 bg-tertiary/10 text-tertiary rounded-lg">
+<span class="material-symbols-outlined">memory</span>
+</div>
+<div class="flex items-center space-x-1 px-2 py-1 bg-error/10 text-error rounded-full">
+<div class="w-2 h-2 rounded-full bg-error"></div>
+<span class="font-label-mono-sm text-label-mono-sm">Offline</span>
+</div>
+</div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface group-hover:text-primary transition-colors">ML Node</h3>
+<p class="font-label-mono-md text-label-mono-md text-on-surface-variant mt-1">10.0.0.42</p>
+<div class="mt-4 text-xs text-on-surface-variant font-label-mono-sm">
+<span class="px-2 py-1 bg-surface-container-high rounded text-on-surface-variant">root</span>
+<span class="px-2 py-1 bg-surface-container-high rounded text-on-surface-variant ml-2">port 2222</span>
+</div>
+</button>
+</div>
+</section>
+<!-- All Hosts Section (List Style) -->
+<section>
+<h2 class="font-headline-sm text-headline-sm text-on-surface mb-md">All Hosts</h2>
+<div class="space-y-lg">
+<!-- Group: Production -->
+<div>
+<h3 class="font-label-mono-md text-label-mono-md text-on-surface-variant uppercase tracking-wider mb-sm pl-2">Production</h3>
+<div class="bg-surface-container border border-outline-variant rounded-xl overflow-hidden divide-y divide-outline-variant">
+<button class="w-full flex items-center justify-between p-md hover:bg-surface-container-high transition-colors text-left">
+<div class="flex items-center space-x-md">
+<div class="text-on-surface-variant">
+<span class="material-symbols-outlined">storage</span>
+</div>
+<div>
+<div class="font-body-md text-body-md text-on-surface font-medium">DB Cluster Master</div>
+<div class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">10.0.1.10</div>
+</div>
+</div>
+<div class="flex items-center">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+</div>
+</button>
+<button class="w-full flex items-center justify-between p-md hover:bg-surface-container-high transition-colors text-left">
+<div class="flex items-center space-x-md">
+<div class="text-on-surface-variant">
+<span class="material-symbols-outlined">api</span>
+</div>
+<div>
+<div class="font-body-md text-body-md text-on-surface font-medium">API Gateway</div>
+<div class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">api.prod.local</div>
+</div>
+</div>
+<div class="flex items-center">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+</div>
+</button>
+</div>
+</div>
+<!-- Group: Staging -->
+<div>
+<h3 class="font-label-mono-md text-label-mono-md text-on-surface-variant uppercase tracking-wider mb-sm pl-2">Staging</h3>
+<div class="bg-surface-container border border-outline-variant rounded-xl overflow-hidden divide-y divide-outline-variant">
+<button class="w-full flex items-center justify-between p-md hover:bg-surface-container-high transition-colors text-left">
+<div class="flex items-center space-x-md">
+<div class="text-on-surface-variant">
+<span class="material-symbols-outlined">dns</span>
+</div>
+<div>
+<div class="font-body-md text-body-md text-on-surface font-medium">Staging Web</div>
+<div class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">192.168.2.50</div>
+</div>
+</div>
+<div class="flex items-center">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+</div>
+</button>
+<button class="w-full flex items-center justify-between p-md hover:bg-surface-container-high transition-colors text-left">
+<div class="flex items-center space-x-md">
+<div class="text-on-surface-variant">
+<span class="material-symbols-outlined">storage</span>
+</div>
+<div>
+<div class="font-body-md text-body-md text-on-surface font-medium">Staging DB</div>
+<div class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">192.168.2.51</div>
+</div>
+</div>
+<div class="flex items-center">
+<div class="w-2 h-2 rounded-full bg-error"></div>
+</div>
+</button>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar (Mobile Only) -->
+<nav class="md:hidden fixed bottom-0 w-full z-50 bg-surface-container dark:bg-surface-container border-t border-outline-variant dark:border-outline-variant flat no shadows flex justify-around items-center h-16 px-4">
+<!-- Active Tab: Hosts -->
+<button class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-full px-4 py-1 scale-95 active:scale-90 transition-transform duration-150">
+<span class="material-symbols-outlined" data-weight="fill">dns</span>
+<span class="font-label-mono-sm text-label-mono-sm mt-1">Hosts</span>
+</button>
+<!-- Inactive Tab: Connections -->
+<button class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary dark:hover:text-primary scale-95 active:scale-90 transition-transform duration-150">
+<span class="material-symbols-outlined">sync_alt</span>
+<span class="font-label-mono-sm text-label-mono-sm mt-1">Connections</span>
+</button>
+<!-- Inactive Tab: Settings -->
+<button class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary dark:hover:text-primary scale-95 active:scale-90 transition-transform duration-150">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-label-mono-sm text-label-mono-sm mt-1">Settings</span>
+</button>
+</nav>
+<!-- Desktop Side Nav Overlay (Hidden on Mobile, simplified for this layout as bottom nav is main spec) -->
+<div class="hidden md:flex fixed left-0 top-16 bottom-0 w-64 bg-surface-container border-r border-outline-variant flex-col p-4 space-y-2 z-40">
+<button class="flex items-center space-x-3 p-3 rounded-lg bg-secondary-container text-on-secondary-container w-full text-left">
+<span class="material-symbols-outlined" data-weight="fill">dns</span>
+<span class="font-body-md text-body-md font-medium">Hosts</span>
+</button>
+<button class="flex items-center space-x-3 p-3 rounded-lg text-on-surface-variant hover:bg-surface-container-high w-full text-left transition-colors">
+<span class="material-symbols-outlined">sync_alt</span>
+<span class="font-body-md text-body-md font-medium">Connections</span>
+</button>
+<div class="flex-grow"></div>
+<button class="flex items-center space-x-3 p-3 rounded-lg text-on-surface-variant hover:bg-surface-container-high w-full text-left transition-colors">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-body-md text-body-md font-medium">Settings</span>
+</button>
+</div>
+<!-- Adjust main content margin for desktop sidebar -->
+<style>
+        @media (min-width: 768px) {
+            main {
+                margin-left: 16rem; /* 64 * 0.25rem */
+                max-width: calc(100% - 16rem);
+            }
+            body {
+                padding-bottom: 0;
+            }
+        }
+    </style>
+</body></html>

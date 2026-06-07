@@ -1,0 +1,868 @@
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
+import 'package:xterm/xterm.dart';
+
+import '../models/app_settings.dart';
+import '../models/host.dart';
+import '../models/remote_file_entry.dart';
+import '../models/resumable_session.dart';
+import '../models/session.dart';
+import '../models/workspace.dart';
+import '../models/workspace_tab.dart';
+import '../models/workspace_template.dart';
+import '../utils/session_state_detector.dart';
+import 'app_settings_repository.dart';
+import 'host_repository.dart';
+import 'known_hosts_store.dart';
+import 'recent_paths_store.dart';
+import 'resumable_session_store.dart';
+import 'secure_storage_service.dart';
+import 'session_foreground.dart';
+import 'ssh_connection.dart';
+import 'ssh_key_repository.dart';
+import 'tmux_startup.dart';
+import 'workspace_repository.dart';
+
+class WorkspaceSummary {
+  const WorkspaceSummary({
+    required this.id,
+    required this.hostId,
+    required this.title,
+    required this.connectionString,
+    required this.state,
+    required this.terminalCount,
+    required this.lastOutputLine,
+  });
+
+  final String id;
+  final String hostId;
+  final String title;
+  final String connectionString;
+  final SessionState state;
+  final int terminalCount;
+  final String lastOutputLine;
+}
+
+class WorkspaceManager extends ChangeNotifier {
+  WorkspaceManager(this._ref);
+
+  final Ref _ref;
+  final _uuid = const Uuid();
+  final Map<String, Workspace> _workspaces = {};
+
+  List<Workspace> get workspaces => _workspaces.values.toList();
+
+  List<WorkspaceSummary> get workspaceSummaries => _workspaces.values
+      .map(
+        (w) => WorkspaceSummary(
+          id: w.id,
+          hostId: w.hostId,
+          title: w.name,
+          connectionString: w.hostId,
+          state: w.aggregateState,
+          terminalCount: w.terminals.length,
+          lastOutputLine: w.terminals.isNotEmpty ? w.terminals.last.lastOutputPreview : '',
+        ),
+      )
+      .toList();
+
+  Workspace? getWorkspace(String id) => _workspaces[id];
+
+  Workspace? findWorkspaceByTmuxSession(String hostId, String tmuxSessionName) {
+    for (final workspace in _workspaces.values) {
+      if (workspace.hostId != hostId) continue;
+      for (final pane in workspace.terminals) {
+        if (pane.useTmux && pane.tmuxSessionName == tmuxSessionName) {
+          return workspace;
+        }
+      }
+    }
+    return null;
+  }
+
+  void focusTmuxSession(String workspaceId, String tmuxSessionName) {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null) return;
+    final index = workspace.terminals.indexWhere(
+      (p) => p.useTmux && p.tmuxSessionName == tmuxSessionName,
+    );
+    if (index >= 0) workspace.activeTabIndex = index;
+    notifyListeners();
+  }
+
+  Future<void> renameWorkspace(String workspaceId, String newName) async {
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty) throw ArgumentError('Workspace name cannot be empty');
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null) return;
+    workspace.name = trimmed;
+    notifyListeners();
+  }
+
+  void _invalidateResumeList() => _ref.invalidate(resumableSessionsProvider);
+
+  Future<Set<String>> reservedTmuxNames(String hostId) async {
+    final reserved = <String>{};
+    final bookmarks = await _ref.read(resumableSessionStoreProvider).list();
+    for (final bookmark in bookmarks) {
+      if (bookmark.hostId == hostId) reserved.add(bookmark.tmuxSessionName);
+    }
+    for (final workspace in _workspaces.values) {
+      if (workspace.hostId != hostId) continue;
+      for (final pane in workspace.terminals) {
+        if (pane.useTmux) reserved.add(pane.tmuxSessionName);
+      }
+    }
+    return reserved;
+  }
+
+  Future<String> suggestSessionName(
+    Host host, {
+    int paneIndex = 0,
+  }) async {
+    final reserved = await reservedTmuxNames(host.id);
+    return TmuxStartup.suggestName(
+      hostLabel: host.label,
+      hostDefault: host.tmuxSessionName,
+      paneIndex: paneIndex,
+      reserved: reserved,
+    );
+  }
+
+  ResumableSession _bookmarkFromPane(Workspace workspace, TerminalPane pane) {
+    return ResumableSession(
+      id: '${workspace.hostId}:${pane.tmuxSessionName}',
+      hostId: workspace.hostId,
+      tmuxSessionName: pane.tmuxSessionName,
+      cwd: pane.cwd,
+      label: pane.tmuxSessionName,
+      useTmux: true,
+      lastActiveAt: DateTime.now(),
+    );
+  }
+
+  Future<void> refreshResumeBookmarks() async {
+    final store = _ref.read(resumableSessionStoreProvider);
+    final existing = await store.list();
+    final byKey = <String, ResumableSession>{
+      for (final bookmark in existing) '${bookmark.hostId}:${bookmark.tmuxSessionName}': bookmark,
+    };
+
+    for (final workspace in _workspaces.values) {
+      for (final pane in workspace.terminals) {
+        if (!pane.useTmux) continue;
+        final key = '${workspace.hostId}:${pane.tmuxSessionName}';
+        byKey[key] = _bookmarkFromPane(workspace, pane);
+      }
+
+      if (!workspace.connection.isConnected) continue;
+      try {
+        final remoteNames = await TmuxStartup.listRemoteSessionNames(workspace.connection);
+        final fallbackCwd = workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~';
+        for (final name in remoteNames) {
+          final key = '${workspace.hostId}:$name';
+          final previous = byKey[key];
+          byKey[key] = ResumableSession(
+            id: key,
+            hostId: workspace.hostId,
+            tmuxSessionName: name,
+            cwd: previous?.cwd ?? fallbackCwd,
+            label: name,
+            useTmux: true,
+            lastActiveAt: DateTime.now(),
+          );
+        }
+      } catch (_) {}
+    }
+
+    await store.merge(byKey.values);
+    _invalidateResumeList();
+  }
+
+  Future<AppSettings> _settings() => _ref.read(appSettingsRepositoryProvider).load();
+
+  HostTmuxMode _resolveTmuxMode(Host host, AppSettings settings) {
+    if (host.tmuxMode == HostTmuxMode.inherit) return settings.defaultTmuxMode;
+    return host.tmuxMode;
+  }
+
+  Duration? _resolveKeepAlive(Host host, AppSettings settings) {
+    if (host.keepAliveIntervalSeconds != null) {
+      if (host.keepAliveIntervalSeconds! <= 0) return null;
+      return Duration(seconds: host.keepAliveIntervalSeconds!);
+    }
+    return settings.keepAliveInterval;
+  }
+
+  String _shellQuote(String path) => "'${path.replaceAll("'", "'\\''")}'";
+
+  Future<Host> _requireHost(String hostId) async {
+    final host = await _ref.read(hostRepositoryProvider).getHost(hostId);
+    if (host == null) throw StateError('Host not found');
+    return host;
+  }
+
+  Future<SshConnection> _connectHost(Host host, {SshConnection? existing}) async {
+    if (existing != null && existing.isConnected) return existing;
+    final settings = await _settings();
+    return SshConnection.connect(
+      host: host,
+      hosts: _ref.read(hostRepositoryProvider),
+      keys: _ref.read(sshKeyRepositoryProvider),
+      knownHosts: _ref.read(knownHostsStoreProvider),
+      keepAliveInterval: _resolveKeepAlive(host, settings),
+    );
+  }
+
+  Future<void> _runPaneStartup({
+    required Workspace workspace,
+    required TerminalPane pane,
+    required Host host,
+    required HostTmuxMode tmuxMode,
+    bool resumeOnly = false,
+  }) async {
+    final conn = workspace.connection;
+    if (pane.cwd.isNotEmpty && pane.cwd != '~') {
+      conn.write(pane.channelId, 'cd ${_shellQuote(pane.cwd)}\n');
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+
+    if (pane.useTmux) {
+      final effectiveMode = tmuxMode == HostTmuxMode.off ? HostTmuxMode.attachExisting : tmuxMode;
+      if (await TmuxStartup.isInstalled(conn)) {
+        final tmuxCmd = TmuxStartup.commandForMode(
+          mode: effectiveMode,
+          sessionName: pane.tmuxSessionName,
+          resumeOnly: resumeOnly,
+        );
+        if (tmuxCmd.isNotEmpty) {
+          conn.write(pane.channelId, '$tmuxCmd\n');
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+        }
+      } else {
+        conn.write(
+          pane.channelId,
+          'echo "[llmshell] tmux not found — using plain shell."\n',
+        );
+      }
+    }
+
+    final snippet = host.startupSnippet?.trim();
+    if (snippet != null && snippet.isNotEmpty) {
+      conn.write(pane.channelId, '$snippet\n');
+    }
+  }
+
+  void _bindPane(Workspace workspace, TerminalPane pane) {
+    final conn = workspace.connection;
+    pane.terminal.onOutput = (data) {
+      conn.write(pane.channelId, data);
+      if (pane.state == SessionState.idle) {
+        pane.state = SessionState.connected;
+        notifyListeners();
+      }
+    };
+
+    conn.attachOutput(
+      pane.channelId,
+      onStdout: (chunk) {
+        pane.terminal.write(chunk);
+        final preview = SessionStateDetector.lastLinePreview(pane.terminal);
+        pane.lastOutputPreview = preview;
+        pane.state = SessionStateDetector.detect(preview, chunk);
+        notifyListeners();
+      },
+      onStderr: (chunk) => pane.terminal.write(chunk),
+    );
+
+    pane.terminal.onResize = (w, h, _, __) {
+      conn.resizeTerminal(pane.channelId, w, h);
+    };
+  }
+
+  Future<Workspace> createWorkspace({
+    required Host host,
+    required String cwd,
+    String? tmuxSessionName,
+    String? name,
+    bool useTmux = true,
+    bool startupResumeOnly = false,
+    SshConnection? existing,
+    int cols = 80,
+    int rows = 24,
+  }) async {
+    final sessionName = useTmux
+        ? (tmuxSessionName ?? TmuxStartup.suggestName(hostLabel: host.label, hostDefault: host.tmuxSessionName))
+        : null;
+
+    if (useTmux && sessionName != null) {
+      final open = findWorkspaceByTmuxSession(host.id, sessionName);
+      if (open != null) {
+        if (existing != null && existing.isConnected) {
+          try {
+            await existing.disconnect();
+          } catch (_) {}
+        }
+        focusTmuxSession(open.id, sessionName);
+        return open;
+      }
+    }
+
+    final settings = await _settings();
+    final connection = await _connectHost(host, existing: existing);
+    final paneId = _uuid.v4();
+    final channelId = _uuid.v4();
+    final resolvedSessionName = useTmux
+        ? sessionName!
+        : 'shell-${paneId.substring(0, 8)}';
+
+    await connection.openShell(channelId: channelId, width: cols, height: rows);
+
+    final pane = TerminalPane(
+      id: paneId,
+      channelId: channelId,
+      cwd: cwd,
+      tmuxSessionName: resolvedSessionName,
+      useTmux: useTmux,
+      terminal: Terminal(maxLines: 2000),
+      controller: TerminalController(),
+    );
+
+    final workspaceName = name?.trim().isNotEmpty == true
+        ? name!.trim()
+        : (useTmux ? resolvedSessionName : host.label);
+
+    final workspaceId = _uuid.v4();
+    final workspace = Workspace(
+      id: workspaceId,
+      name: workspaceName,
+      hostId: host.id,
+      connection: connection,
+      terminals: [pane],
+      auxTabs: [
+        WorkspaceTab(id: _uuid.v4(), type: WorkspaceTabType.files, title: 'Files', path: cwd),
+      ],
+    );
+
+    connection.onDisconnected = () => _markWorkspaceDisconnected(workspaceId);
+    _bindPane(workspace, pane);
+
+    await _runPaneStartup(
+      workspace: workspace,
+      pane: pane,
+      host: host,
+      tmuxMode: pane.useTmux ? _resolveTmuxMode(host, settings) : HostTmuxMode.off,
+      resumeOnly: startupResumeOnly,
+    );
+
+    await _saveBookmark(workspace, pane, host);
+    await _ref.read(hostRepositoryProvider).recordRecent(host.id);
+    _workspaces[workspaceId] = workspace;
+    _syncForegroundService();
+    notifyListeners();
+    return workspace;
+  }
+
+  Future<Workspace> resumeSession(
+    ResumableSession bookmark, {
+    bool? useTmux,
+    SshConnection? existing,
+  }) async {
+    final effectiveUseTmux = useTmux ?? bookmark.useTmux;
+    if (effectiveUseTmux) {
+      final open = findWorkspaceByTmuxSession(bookmark.hostId, bookmark.tmuxSessionName);
+      if (open != null) {
+        if (existing != null && existing.isConnected) {
+          try {
+            await existing.disconnect();
+          } catch (_) {}
+        }
+        focusTmuxSession(open.id, bookmark.tmuxSessionName);
+        return open;
+      }
+    }
+
+    final host = await _requireHost(bookmark.hostId);
+    final workspace = await createWorkspace(
+      host: host,
+      cwd: bookmark.cwd,
+      tmuxSessionName: bookmark.tmuxSessionName,
+      name: bookmark.tmuxSessionName,
+      useTmux: effectiveUseTmux,
+      startupResumeOnly: effectiveUseTmux,
+      existing: existing,
+    );
+    notifyListeners();
+    return workspace;
+  }
+
+  Future<TerminalPane> addTerminal(
+    String workspaceId, {
+    String? cwd,
+    String? tmuxSessionName,
+    bool useTmux = true,
+  }) async {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null) throw StateError('Workspace not found');
+    final host = await _requireHost(workspace.hostId);
+    final settings = await _settings();
+
+    final paneId = _uuid.v4();
+    final channelId = _uuid.v4();
+    final paneCwd = cwd ?? workspace.terminals.first.cwd;
+    final name = useTmux
+        ? (tmuxSessionName ??
+            TmuxStartup.suggestName(
+              hostLabel: host.label,
+              hostDefault: host.tmuxSessionName,
+              paneIndex: workspace.terminals.length,
+            ))
+        : 'shell-${paneId.substring(0, 8)}';
+
+    await workspace.connection.openShell(channelId: channelId);
+    final pane = TerminalPane(
+      id: paneId,
+      channelId: channelId,
+      cwd: paneCwd,
+      tmuxSessionName: name,
+      useTmux: useTmux,
+      terminal: Terminal(maxLines: 2000),
+      controller: TerminalController(),
+    );
+
+    workspace.terminals.add(pane);
+    _bindPane(workspace, pane);
+    await _runPaneStartup(
+      workspace: workspace,
+      pane: pane,
+      host: host,
+      tmuxMode: pane.useTmux ? _resolveTmuxMode(host, settings) : HostTmuxMode.off,
+    );
+    await _saveBookmark(workspace, pane, host);
+    workspace.activeTabIndex = workspace.terminals.length - 1;
+    notifyListeners();
+    return pane;
+  }
+
+  Future<void> _saveBookmark(Workspace workspace, TerminalPane pane, Host host) async {
+    if (!pane.useTmux) return;
+    await _ref.read(resumableSessionStoreProvider).upsert(_bookmarkFromPane(workspace, pane));
+    _invalidateResumeList();
+  }
+
+  Future<void> saveAllBookmarks() async {
+    await refreshResumeBookmarks();
+  }
+
+  Future<void> detachPane(String workspaceId, String paneId, {bool keepBookmark = true}) async {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null) return;
+    final pane = workspace.terminals.firstWhere((p) => p.id == paneId);
+    if (pane.useTmux) {
+      workspace.connection.write(pane.channelId, TmuxStartup.detach());
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    await workspace.connection.closeShell(pane.channelId);
+    workspace.terminals.removeWhere((p) => p.id == paneId);
+    if (workspace.activeTabIndex >= workspace.terminals.length + workspace.auxTabs.length) {
+      workspace.activeTabIndex = 0;
+    }
+    if (keepBookmark) {
+      final host = await _requireHost(workspace.hostId);
+      await _saveBookmark(workspace, pane, host);
+    }
+    if (workspace.terminals.isEmpty) {
+      await closeWorkspace(workspaceId);
+    } else {
+      notifyListeners();
+    }
+  }
+
+  Future<void> endPaneSession(String workspaceId, String paneId) async {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null) return;
+    final pane = workspace.terminals.firstWhere((p) => p.id == paneId);
+    if (pane.useTmux) {
+      workspace.connection.write(pane.channelId, TmuxStartup.killSession(pane.tmuxSessionName));
+      await _ref.read(resumableSessionStoreProvider).removeByName(workspace.hostId, pane.tmuxSessionName);
+      _invalidateResumeList();
+    }
+    await detachPane(workspaceId, paneId, keepBookmark: false);
+  }
+
+  Future<void> renamePaneSession(String workspaceId, String paneId, String newName) async {
+    if (!TmuxStartup.isValidSessionName(newName)) {
+      throw ArgumentError('Invalid session name');
+    }
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null) return;
+    final pane = workspace.terminals.firstWhere((p) => p.id == paneId);
+    if (!pane.useTmux) {
+      throw StateError('Cannot rename a plain shell tab');
+    }
+    final oldName = pane.tmuxSessionName;
+    workspace.connection.write(
+      pane.channelId,
+      "tmux rename-session -t ${_shellQuote(oldName)} ${_shellQuote(newName)}\n",
+    );
+    pane.tmuxSessionName = newName;
+    if (workspace.terminals.length == 1 && workspace.name == oldName) {
+      workspace.name = newName;
+    }
+    await _ref.read(resumableSessionStoreProvider).removeByName(workspace.hostId, oldName);
+    _invalidateResumeList();
+    final host = await _requireHost(workspace.hostId);
+    await _saveBookmark(workspace, pane, host);
+    notifyListeners();
+  }
+
+  Future<void> closeWorkspace(String workspaceId, {bool endSessions = false}) async {
+    final workspace = _workspaces.remove(workspaceId);
+    if (workspace == null) return;
+
+    final settings = await _settings();
+    for (final pane in workspace.terminals) {
+      if (!pane.useTmux) continue;
+      if (endSessions) {
+        workspace.connection.write(pane.channelId, TmuxStartup.killSession(pane.tmuxSessionName));
+        await _ref.read(resumableSessionStoreProvider).removeByName(workspace.hostId, pane.tmuxSessionName);
+        _invalidateResumeList();
+      } else if (settings.detachOnAppClose) {
+        workspace.connection.write(pane.channelId, TmuxStartup.detach());
+        final host = await _requireHost(workspace.hostId);
+        await _saveBookmark(workspace, pane, host);
+      }
+    }
+    if (!endSessions && settings.detachOnAppClose) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    await workspace.connection.disconnect();
+    _syncForegroundService();
+    notifyListeners();
+  }
+
+  Future<bool> reconnect(String workspaceId) async {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null) return false;
+    if (workspace.connection.isConnected) return true;
+    if (workspace.state == SessionState.reconnecting) return false;
+
+    workspace.state = SessionState.reconnecting;
+    notifyListeners();
+
+    try {
+      final host = await _requireHost(workspace.hostId);
+      final settings = await _settings();
+      final savedPanes = workspace.terminals
+          .map(
+            (p) => (
+              cwd: p.cwd,
+              name: p.tmuxSessionName,
+              useTmux: p.useTmux,
+              terminal: p.terminal,
+              controller: p.controller,
+            ),
+          )
+          .toList();
+
+      try {
+        await workspace.connection.disconnect();
+      } catch (_) {}
+
+      final connection = await _connectHost(host);
+      workspace.connection = connection;
+      connection.onDisconnected = () => _markWorkspaceDisconnected(workspaceId);
+
+      workspace.terminals.clear();
+      for (final saved in savedPanes) {
+        final paneId = _uuid.v4();
+        final channelId = _uuid.v4();
+        await connection.openShell(
+          channelId: channelId,
+          width: saved.terminal.viewWidth,
+          height: saved.terminal.viewHeight,
+        );
+        final pane = TerminalPane(
+          id: paneId,
+          channelId: channelId,
+          cwd: saved.cwd,
+          tmuxSessionName: saved.name,
+          useTmux: saved.useTmux,
+          terminal: saved.terminal,
+          controller: saved.controller,
+        );
+        workspace.terminals.add(pane);
+        _bindPane(workspace, pane);
+        await _runPaneStartup(
+          workspace: workspace,
+          pane: pane,
+          host: host,
+          tmuxMode: saved.useTmux ? _resolveTmuxMode(host, settings) : HostTmuxMode.off,
+          resumeOnly: saved.useTmux,
+        );
+      }
+
+      workspace.state = SessionState.connected;
+      _syncForegroundService();
+      notifyListeners();
+      return true;
+    } catch (_) {
+      workspace.state = SessionState.disconnected;
+      for (final p in workspace.terminals) {
+        p.state = SessionState.disconnected;
+      }
+      _syncForegroundService();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<void> reconnectAllDisconnected() async {
+    for (final w in _workspaces.values.toList()) {
+      if (w.aggregateState == SessionState.disconnected) {
+        await reconnect(w.id);
+      }
+    }
+  }
+
+  void _markWorkspaceDisconnected(String workspaceId) {
+    final w = _workspaces[workspaceId];
+    if (w == null) return;
+    w.state = SessionState.disconnected;
+    for (final p in w.terminals) {
+      p.state = SessionState.disconnected;
+    }
+    _syncForegroundService();
+    notifyListeners();
+  }
+
+  void sendCommand(String workspaceId, String command, {String? paneId}) {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null || !workspace.connection.isConnected) return;
+    if (workspace.broadcastEnabled) {
+      for (final pane in workspace.terminals) {
+        workspace.connection.write(pane.channelId, '$command\n');
+        pane.state = SessionState.processing;
+      }
+    } else {
+      final pane = paneId != null
+          ? workspace.terminals.firstWhere((p) => p.id == paneId)
+          : workspace.activeTerminal;
+      if (pane == null) return;
+      workspace.connection.write(pane.channelId, '$command\n');
+      pane.state = SessionState.processing;
+    }
+    notifyListeners();
+  }
+
+  void sendBytes(String workspaceId, Uint8List bytes, {String? paneId}) {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null || !workspace.connection.isConnected) return;
+    if (workspace.broadcastEnabled) {
+      for (final pane in workspace.terminals) {
+        workspace.connection.writeBytes(pane.channelId, bytes);
+      }
+    } else {
+      final pane = paneId != null
+          ? workspace.terminals.firstWhere((p) => p.id == paneId)
+          : workspace.activeTerminal;
+      if (pane == null) return;
+      workspace.connection.writeBytes(pane.channelId, bytes);
+    }
+  }
+
+  Future<List<RemoteFileEntry>> listDirectory(String workspaceId, String path) async {
+    final w = _workspaces[workspaceId];
+    if (w == null || !w.connection.isConnected) throw StateError('Connection lost');
+    return w.connection.listDirectory(path);
+  }
+
+  Future<void> createDirectory(String workspaceId, String path) async {
+    final w = _workspaces[workspaceId];
+    if (w == null || !w.connection.isConnected) throw StateError('Connection lost');
+    await w.connection.createDirectory(path);
+  }
+
+  Future<void> uploadFile(String workspaceId, String localPath, String remotePath) async {
+    final w = _workspaces[workspaceId];
+    if (w == null || !w.connection.isConnected) throw StateError('Connection lost');
+    await w.connection.uploadFile(localPath, remotePath);
+  }
+
+  Future<void> uploadBytes(String workspaceId, Uint8List data, String remotePath) async {
+    final w = _workspaces[workspaceId];
+    if (w == null || !w.connection.isConnected) throw StateError('Connection lost');
+    await w.connection.uploadBytes(data, remotePath);
+  }
+
+  Future<String> runGitDiff(String workspaceId, String cwd) async {
+    final w = _workspaces[workspaceId]!;
+    return w.connection.executeCapture('cd ${_shellQuote(cwd)} && git diff 2>/dev/null || git diff');
+  }
+
+  Future<int> ensureBrowserForward(String workspaceId, String tabId, int remotePort) async {
+    final w = _workspaces[workspaceId]!;
+    final existing = w.portForwardsByTabId[tabId];
+    if (existing != null) return existing;
+    final forward = await w.connection.forwardRemotePort(remotePort);
+    w.portForwardsByTabId[tabId] = forward.localPort;
+    return forward.localPort;
+  }
+
+  void updateWorkspaceUi(
+    String workspaceId, {
+    int? activeTabIndex,
+    WorkspaceViewMode? viewMode,
+    bool? broadcastEnabled,
+    List<WorkspaceTab>? auxTabs,
+  }) {
+    final w = _workspaces[workspaceId];
+    if (w == null) return;
+    if (activeTabIndex != null) w.activeTabIndex = activeTabIndex;
+    if (viewMode != null) w.viewMode = viewMode;
+    if (broadcastEnabled != null) w.broadcastEnabled = broadcastEnabled;
+    if (auxTabs != null) w.auxTabs = auxTabs;
+    notifyListeners();
+  }
+
+  void addAuxTab(String workspaceId, WorkspaceTab tab) {
+    final w = _workspaces[workspaceId];
+    if (w == null) return;
+    w.auxTabs.add(tab);
+    w.activeTabIndex = w.terminals.length + w.auxTabs.length - 1;
+    notifyListeners();
+  }
+
+  void removeAuxTab(String workspaceId, int auxIndex) {
+    final w = _workspaces[workspaceId];
+    if (w == null) return;
+    w.auxTabs.removeAt(auxIndex);
+    if (w.activeTabIndex >= w.terminals.length + w.auxTabs.length) {
+      w.activeTabIndex = w.terminals.length + w.auxTabs.length - 1;
+    }
+    notifyListeners();
+  }
+
+  void addPendingImage(String workspaceId, String path) {
+    _workspaces[workspaceId]?.pendingImagePaths.add(path);
+    notifyListeners();
+  }
+
+  void removePendingImage(String workspaceId, int index) {
+    _workspaces[workspaceId]?.pendingImagePaths.removeAt(index);
+    notifyListeners();
+  }
+
+  Future<void> refreshConnectionHealth() async {
+    var changed = false;
+    for (final w in _workspaces.values) {
+      if (!w.connection.isConnected) {
+        if (w.state != SessionState.disconnected) {
+          w.state = SessionState.disconnected;
+          changed = true;
+        }
+        continue;
+      }
+      try {
+        await w.connection.ping();
+      } catch (_) {
+        if (w.state != SessionState.disconnected) {
+          w.state = SessionState.disconnected;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      _syncForegroundService();
+      notifyListeners();
+    }
+  }
+
+  void _syncForegroundService() {
+    final count = _workspaces.values.where((w) => w.connection.isConnected).length;
+    if (count > 0) {
+      SessionForeground.start(count);
+    } else {
+      SessionForeground.stop();
+    }
+  }
+
+  Future<WorkspaceTemplate> saveAsTemplate(String workspaceId, String name) async {
+    final w = _workspaces[workspaceId];
+    if (w == null) throw StateError('Workspace not found');
+    final template = WorkspaceTemplate(
+      id: _uuid.v4(),
+      name: name,
+      hostId: w.hostId,
+      entries: w.terminals
+          .map(
+            (p) => WorkspaceTemplateEntry(
+              cwd: p.cwd,
+              tmuxSessionName: p.tmuxSessionName,
+              label: p.tmuxSessionName,
+            ),
+          )
+          .toList(),
+    );
+    await _ref.read(workspaceRepositoryProvider).save(template);
+    return template;
+  }
+
+  Future<Workspace> openTemplate(
+    WorkspaceTemplate template, {
+    bool useTmux = true,
+    SshConnection? existing,
+  }) async {
+    final host = await _requireHost(template.hostId);
+    if (template.entries.isEmpty) {
+      return createWorkspace(host: host, cwd: '~', useTmux: useTmux, existing: existing);
+    }
+
+    final first = template.entries.first;
+    final workspace = await createWorkspace(
+      host: host,
+      cwd: first.cwd,
+      tmuxSessionName: first.tmuxSessionName,
+      name: template.name,
+      useTmux: useTmux,
+      existing: existing,
+    );
+
+    for (var i = 1; i < template.entries.length; i++) {
+      final entry = template.entries[i];
+      await addTerminal(
+        workspace.id,
+        cwd: entry.cwd,
+        tmuxSessionName: entry.tmuxSessionName,
+        useTmux: useTmux,
+      );
+    }
+    return workspace;
+  }
+
+  Future<void> disposeAll() async {
+    for (final id in _workspaces.keys.toList()) {
+      await closeWorkspace(id);
+    }
+  }
+}
+
+final secureStorageProvider = Provider<SecureStorageService>((ref) => SecureStorageService());
+
+final knownHostsStoreProvider = Provider<KnownHostsStore>((ref) => KnownHostsStore());
+
+final recentPathsStoreProvider = Provider<RecentPathsStore>((ref) => RecentPathsStore());
+
+final hostRepositoryProvider = Provider<HostRepository>((ref) {
+  return HostRepository(ref.watch(secureStorageProvider));
+});
+
+final workspaceManagerProvider = ChangeNotifierProvider<WorkspaceManager>((ref) {
+  ref.keepAlive();
+  final manager = WorkspaceManager(ref);
+  ref.onDispose(() => manager.disposeAll());
+  return manager;
+});

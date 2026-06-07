@@ -1,0 +1,294 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Connections Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                            "on-secondary": "#00390d",
+                            "on-background": "#dfe2eb",
+                            "on-secondary-container": "#00320a",
+                            "on-error": "#690005",
+                            "on-tertiary-fixed-variant": "#5a21ab",
+                            "tertiary-fixed": "#ecdcff",
+                            "surface-bright": "#353940",
+                            "on-primary-fixed": "#001c38",
+                            "inverse-surface": "#dfe2eb",
+                            "error-container": "#93000a",
+                            "on-primary": "#00315c",
+                            "on-tertiary-fixed": "#270058",
+                            "inverse-on-surface": "#2d3137",
+                            "inverse-primary": "#0060aa",
+                            "primary-fixed": "#d3e4ff",
+                            "surface": "#10141a",
+                            "on-surface-variant": "#c0c7d4",
+                            "background": "#10141a",
+                            "on-tertiary-container": "#4c069d",
+                            "secondary": "#67df70",
+                            "tertiary-container": "#b88eff",
+                            "secondary-fixed-dim": "#67df70",
+                            "surface-container-lowest": "#0a0e14",
+                            "surface-container": "#1c2026",
+                            "secondary-fixed": "#83fc89",
+                            "primary": "#a2c9ff",
+                            "secondary-container": "#27a640",
+                            "surface-tint": "#a2c9ff",
+                            "outline-variant": "#414752",
+                            "on-secondary-fixed": "#002105",
+                            "on-primary-container": "#003a6b",
+                            "tertiary-fixed-dim": "#d5bbff",
+                            "primary-container": "#58a6ff",
+                            "surface-container-highest": "#31353c",
+                            "on-primary-fixed-variant": "#004882",
+                            "error": "#ffb4ab",
+                            "surface-container-low": "#181c22",
+                            "surface-container-high": "#262a31",
+                            "surface-dim": "#10141a",
+                            "surface-variant": "#31353c",
+                            "tertiary": "#d5bbff",
+                            "outline": "#8b919d",
+                            "on-error-container": "#ffdad6",
+                            "on-tertiary": "#41008b",
+                            "primary-fixed-dim": "#a2c9ff",
+                            "on-surface": "#dfe2eb",
+                            "on-secondary-fixed-variant": "#005317"
+                    },
+                    "borderRadius": {
+                            "DEFAULT": "0.25rem",
+                            "lg": "0.5rem",
+                            "xl": "0.75rem",
+                            "full": "9999px"
+                    },
+                    "spacing": {
+                            "xl": "32px",
+                            "margin-desktop": "48px",
+                            "lg": "24px",
+                            "sm": "8px",
+                            "base": "4px",
+                            "md": "16px",
+                            "gutter": "16px",
+                            "xs": "4px",
+                            "margin-mobile": "16px"
+                    },
+                    "fontFamily": {
+                            "label-mono-md": ["JetBrains Mono"],
+                            "headline-md": ["Inter"],
+                            "headline-lg": ["Inter"],
+                            "body-md": ["Inter"],
+                            "headline-lg-mobile": ["Inter"],
+                            "label-mono-sm": ["JetBrains Mono"],
+                            "headline-sm": ["Inter"],
+                            "body-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                            "label-mono-md": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                            "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                            "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                            "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                            "headline-lg-mobile": ["26px", {"lineHeight": "32px", "fontWeight": "600"}],
+                            "label-mono-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}],
+                            "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "500"}],
+                            "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .pulse-dot {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 180, 171, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(255, 180, 171, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 180, 171, 0); }
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen flex flex-col md:flex-row">
+<!-- Desktop Sidebar (Navigation Drawer) -->
+<aside class="hidden md:flex h-full w-[280px] rounded-r-xl bg-surface-container dark:bg-surface-container shadow-lg fixed inset-y-0 left-0 z-50 flex-col">
+<div class="p-lg border-b border-outline-variant flex items-center gap-sm">
+<span class="material-symbols-outlined text-primary text-headline-md" style="font-variation-settings: 'FILL' 1;">account_circle</span>
+<div>
+<h2 class="font-headline-sm text-headline-sm text-primary">Admin</h2>
+<p class="font-label-mono-sm text-label-mono-sm text-on-surface-variant">Secure Shell Active</p>
+</div>
+</div>
+<nav class="flex-1 py-md overflow-y-auto">
+<ul class="space-y-sm">
+<li class="">
+<a class="flex items-center gap-md bg-secondary-container text-on-secondary-container rounded-full mx-2 px-4 py-3 font-body-md text-body-md hover:bg-surface-container-highest transition-colors active:scale-95 transition-transform" href="#">
+<span class="material-symbols-outlined">terminal</span>
+                        Terminal Sessions
+                    </a>
+</li>
+<li class="">
+<a class="flex items-center gap-md text-on-surface-variant hover:text-on-surface mx-2 px-4 py-3 font-body-md text-body-md hover:bg-surface-container-highest transition-colors active:scale-95 transition-transform" href="#">
+<span class="material-symbols-outlined">folder_open</span>
+                        File Browser
+                    </a>
+</li>
+<li class="">
+<a class="flex items-center gap-md text-on-surface-variant hover:text-on-surface mx-2 px-4 py-3 font-body-md text-body-md hover:bg-surface-container-highest transition-colors active:scale-95 transition-transform" href="#">
+<span class="material-symbols-outlined">language</span>
+                        Web Views
+                    </a>
+</li>
+<li class="">
+<a class="flex items-center gap-md text-on-surface-variant hover:text-on-surface mx-2 px-4 py-3 font-body-md text-body-md hover:bg-surface-container-highest transition-colors active:scale-95 transition-transform" href="#">
+<span class="material-symbols-outlined">vpn_key</span>
+                        Key Manager
+                    </a>
+</li>
+</ul>
+</nav>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col md:ml-[280px] w-full max-w-5xl mx-auto pb-24 md:pb-0">
+<!-- TopAppBar (Mobile) -->
+<header class="md:hidden flex items-center px-margin-mobile w-full h-16 bg-surface dark:bg-surface flat no shadows justify-center">
+
+<h1 class="font-headline-md text-headline-md text-primary dark:text-primary">Connections</h1>
+
+</header>
+<!-- Desktop Header Anchor -->
+<div class="hidden md:flex justify-between items-end pt-margin-desktop px-margin-desktop pb-lg">
+<h1 class="font-headline-lg text-headline-lg text-on-background font-bold tracking-tight">Active Sessions</h1>
+<button class="flex items-center gap-sm bg-primary text-on-primary px-md py-sm rounded-lg hover:bg-primary-container transition-colors font-body-md text-body-md font-medium">
+<span class="material-symbols-outlined text-[20px]">add</span>
+                 New Connection
+             </button>
+</div>
+<!-- Content Canvas -->
+<div class="flex-1 p-margin-mobile md:px-margin-desktop overflow-y-auto">
+<!-- Connection Cards Grid -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-md md:gap-lg">
+<!-- Card 1: Needs Input -->
+<div class="group relative bg-surface border border-outline-variant rounded-xl p-md md:p-lg flex flex-col gap-md transition-all hover:bg-surface-container-highest">
+<div class="absolute top-0 left-0 w-1 h-full bg-error rounded-l-xl"></div>
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-outline-variant">
+<span class="material-symbols-outlined text-tertiary">dns</span>
+</div>
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-background">Web Server</h3>
+<p class="font-label-mono-sm text-label-mono-sm text-on-surface-variant mt-xs">root@192.168.1.10</p>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<span class="px-2 py-1 rounded-full bg-error/20 text-error font-label-mono-sm text-label-mono-sm border border-error/30 flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-error pulse-dot"></span>
+                                Awaiting Input
+                            </span>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-lg p-sm border border-outline-variant font-label-mono-sm text-label-mono-sm text-on-surface-variant overflow-hidden text-ellipsis whitespace-nowrap group-hover:border-outline transition-colors">
+                        $ sudo apt-get upgrade -y [Y/n]? _
+                    </div>
+</div>
+<!-- Card 2: Connected -->
+<div class="group relative bg-surface border border-outline-variant rounded-xl p-md md:p-lg flex flex-col gap-md transition-all hover:bg-surface-container-highest">
+<div class="absolute top-0 left-0 w-1 h-full bg-secondary rounded-l-xl"></div>
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-outline-variant">
+<span class="material-symbols-outlined text-secondary">database</span>
+</div>
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-background">DB Admin</h3>
+<p class="font-label-mono-sm text-label-mono-sm text-on-surface-variant mt-xs">postgres@db-cluster-01</p>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<span class="px-2 py-1 rounded-full bg-secondary/10 text-secondary font-label-mono-sm text-label-mono-sm flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+                                Connected
+                            </span>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-lg p-sm border border-outline-variant font-label-mono-sm text-label-mono-sm text-on-surface-variant overflow-hidden text-ellipsis whitespace-nowrap group-hover:border-outline transition-colors">
+                        tail -f /var/log/postgresql/postgresql-14-main.log
+                    </div>
+</div>
+<!-- Card 3: Connected / Processing -->
+<div class="group relative bg-surface border border-outline-variant rounded-xl p-md md:p-lg flex flex-col gap-md transition-all hover:bg-surface-container-highest">
+<div class="absolute top-0 left-0 w-1 h-full bg-primary rounded-l-xl"></div>
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-outline-variant">
+<span class="material-symbols-outlined text-primary">memory</span>
+</div>
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-background">ML Training</h3>
+<p class="font-label-mono-sm text-label-mono-sm text-on-surface-variant mt-xs">ubuntu@gpu-instance-x8</p>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<span class="px-2 py-1 rounded-full bg-primary/10 text-primary font-label-mono-sm text-label-mono-sm flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                                Processing
+                            </span>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-lg p-sm border border-outline-variant font-label-mono-sm text-label-mono-sm text-primary overflow-hidden text-ellipsis whitespace-nowrap group-hover:border-outline transition-colors">
+                        Epoch 45/100 [=====&gt;.....] 55% - loss: 0.2341
+                    </div>
+</div>
+<!-- Card 4: Idle -->
+<div class="group relative bg-surface border border-outline-variant rounded-xl p-md md:p-lg flex flex-col gap-md transition-all hover:bg-surface-container-highest opacity-70 hover:opacity-100">
+<div class="absolute top-0 left-0 w-1 h-full bg-outline rounded-l-xl"></div>
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-outline-variant">
+<span class="material-symbols-outlined text-outline">storage</span>
+</div>
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-background">Backup Server</h3>
+<p class="font-label-mono-sm text-label-mono-sm text-on-surface-variant mt-xs">admin@backup-vault</p>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<span class="px-2 py-1 rounded-full bg-surface-variant text-on-surface-variant font-label-mono-sm text-label-mono-sm flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-outline"></span>
+                                Idle
+                            </span>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-lg p-sm border border-outline-variant font-label-mono-sm text-label-mono-sm text-on-surface-variant overflow-hidden text-ellipsis whitespace-nowrap group-hover:border-outline transition-colors">
+                        admin@backup-vault:~$ 
+                    </div>
+</div>
+</div>
+</div>
+<!-- Mobile FAB -->
+<button class="md:hidden fixed bottom-24 right-margin-mobile w-14 h-14 bg-primary text-on-primary rounded-2xl shadow-lg flex items-center justify-center hover:bg-primary-container transition-all active:scale-95 z-40">
+<span class="material-symbols-outlined text-[24px]">add</span>
+</button>
+</main>
+<!-- BottomNavBar (Mobile) -->
+<nav class="md:hidden fixed bottom-0 w-full z-50 flex justify-around items-center py-2 px-margin-mobile bg-surface-container-low dark:bg-surface-container-low border-t border-outline-variant flat no shadows"><button class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-all active:scale-90 font-label-mono-sm text-label-mono-sm px-5 py-1">
+<span class="material-symbols-outlined mb-xs">dns</span>
+<span class="">Hosts</span>
+</button>
+<button class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-2xl px-5 py-1 hover:text-primary transition-all active:scale-90 font-label-mono-sm text-label-mono-sm">
+<span class="material-symbols-outlined mb-xs" style="font-variation-settings: 'FILL' 1;">terminal</span>
+<span class="">Connections</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-all active:scale-90 font-label-mono-sm text-label-mono-sm px-5 py-1">
+<span class="material-symbols-outlined mb-xs">settings</span>
+<span class="">Settings</span>
+</button></nav>
+
+
+</body></html>
