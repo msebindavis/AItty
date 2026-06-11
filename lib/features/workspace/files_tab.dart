@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/spacing.dart';
@@ -246,6 +247,58 @@ class _FilesTabState extends ConsumerState<FilesTab> {
     setState(() => _sidebarVisible = !_sidebarVisible);
   }
 
+  Future<void> _showFullPathDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ObsidianColors.surfaceContainer,
+        title: Text('Current path', style: AppTypography.inter(size: 16, weight: FontWeight.w600)),
+        content: SelectableText(_path, style: AppTypography.mono(size: 13)),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _path));
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Path copied')),
+              );
+            },
+            child: const Text('Copy'),
+          ),
+          FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPathChip({required String label, required String tooltip}) {
+    return Expanded(
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: _showFullPathDialog,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    style: AppTypography.mono(size: 12, color: ObsidianColors.onSurfaceVariant),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const Icon(Icons.info_outline, size: 14, color: ObsidianColors.outline),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
@@ -283,11 +336,18 @@ class _FilesTabState extends ConsumerState<FilesTab> {
       child: Row(
         children: [
           Tooltip(
-            message: _path,
-            child: Text(
-              _pathBasename,
-              style: AppTypography.mono(size: 11, color: ObsidianColors.onSurfaceVariant),
-              overflow: TextOverflow.ellipsis,
+            message: '$_path\nTap to view full path',
+            child: InkWell(
+              onTap: _showFullPathDialog,
+              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: Text(
+                  _pathBasename,
+                  style: AppTypography.mono(size: 11, color: ObsidianColors.onSurfaceVariant),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ),
           ),
           const Spacer(),
@@ -316,14 +376,8 @@ class _FilesTabState extends ConsumerState<FilesTab> {
       child: Row(
         children: [
           const Icon(Icons.folder_outlined, color: ObsidianColors.primary, size: 18),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _path,
-              style: AppTypography.mono(size: 12),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
+          const SizedBox(width: 4),
+          _buildPathChip(label: _path, tooltip: 'Tap to view full path'),
           _filesIconButton(
             icon: Icons.view_sidebar_outlined,
             tooltip: 'IDE view',
