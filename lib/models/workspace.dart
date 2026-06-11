@@ -42,7 +42,6 @@ class Workspace {
     required this.auxTabs,
     this.activeTabIndex = 0,
     this.viewMode = WorkspaceViewMode.focus,
-    this.broadcastEnabled = false,
     this.state = SessionState.connected,
     this.pendingImagePaths = const [],
   });
@@ -55,7 +54,6 @@ class Workspace {
   List<WorkspaceTab> auxTabs;
   int activeTabIndex;
   WorkspaceViewMode viewMode;
-  bool broadcastEnabled;
   SessionState state;
   List<String> pendingImagePaths;
   final Map<String, int> portForwardsByTabId = {};

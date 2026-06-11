@@ -26,6 +26,16 @@ import 'ssh_key_repository.dart';
 import 'tmux_startup.dart';
 import 'workspace_repository.dart';
 
+class RemoteTmuxSession {
+  const RemoteTmuxSession({
+    required this.name,
+    this.cwd,
+  });
+
+  final String name;
+  final String? cwd;
+}
+
 class WorkspaceSummary {
   const WorkspaceSummary({
     required this.id,
@@ -160,17 +170,16 @@ class WorkspaceManager extends ChangeNotifier {
 
       if (!workspace.connection.isConnected) continue;
       try {
-        final remoteNames = await TmuxStartup.listRemoteSessionNames(workspace.connection);
-        final fallbackCwd = workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~';
-        for (final name in remoteNames) {
-          final key = '${workspace.hostId}:$name';
+        final remoteSessions = await TmuxStartup.listRemoteSessions(workspace.connection);
+        for (final session in remoteSessions) {
+          final key = '${workspace.hostId}:${session.name}';
           final previous = byKey[key];
           byKey[key] = ResumableSession(
             id: key,
             hostId: workspace.hostId,
-            tmuxSessionName: name,
-            cwd: previous?.cwd ?? fallbackCwd,
-            label: name,
+            tmuxSessionName: session.name,
+            cwd: _preferSessionCwd(session.cwd, previous?.cwd) ?? '~',
+            label: session.name,
             useTmux: true,
             lastActiveAt: DateTime.now(),
           );
@@ -225,7 +234,12 @@ class WorkspaceManager extends ChangeNotifier {
     bool resumeOnly = false,
   }) async {
     final conn = workspace.connection;
-    if (pane.cwd.isNotEmpty && pane.cwd != '~') {
+    final attachingTmux = pane.useTmux && resumeOnly;
+    final tmuxCwd = pane.cwd.isNotEmpty && pane.cwd != '~' ? pane.cwd : null;
+
+    // Attach/resume reuses the tmux session's own working directory — skip cd.
+    // New tmux sessions receive cwd via `tmux new-session -c`.
+    if (!pane.useTmux && pane.cwd.isNotEmpty && pane.cwd != '~') {
       conn.write(pane.channelId, 'cd ${_shellQuote(pane.cwd)}\n');
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
@@ -237,10 +251,17 @@ class WorkspaceManager extends ChangeNotifier {
           mode: effectiveMode,
           sessionName: pane.tmuxSessionName,
           resumeOnly: resumeOnly,
+          cwd: attachingTmux ? null : tmuxCwd,
         );
         if (tmuxCmd.isNotEmpty) {
           conn.write(pane.channelId, '$tmuxCmd\n');
           await Future<void>.delayed(const Duration(milliseconds: 400));
+          // After attach, move the active pane to the expected project directory.
+          // Listing may show bookmark/pane path while the new client lands elsewhere.
+          if (resumeOnly && tmuxCwd != null) {
+            conn.write(pane.channelId, 'cd ${_shellQuote(tmuxCwd)}\n');
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
         }
       } else {
         conn.write(
@@ -251,7 +272,7 @@ class WorkspaceManager extends ChangeNotifier {
     }
 
     final snippet = host.startupSnippet?.trim();
-    if (snippet != null && snippet.isNotEmpty) {
+    if (!resumeOnly && snippet != null && snippet.isNotEmpty) {
       conn.write(pane.channelId, '$snippet\n');
     }
   }
@@ -281,6 +302,113 @@ class WorkspaceManager extends ChangeNotifier {
     pane.terminal.onResize = (w, h, _, __) {
       conn.resizeTerminal(pane.channelId, w, h);
     };
+  }
+
+  Future<Workspace> connectHostWorkspace({
+    required Host host,
+    SshConnection? existing,
+  }) async {
+    final connection = await _connectHost(host, existing: existing);
+    final workspaceId = _uuid.v4();
+    final homePath = '/home/${host.username}';
+    final workspace = Workspace(
+      id: workspaceId,
+      name: host.label,
+      hostId: host.id,
+      connection: connection,
+      terminals: [],
+      auxTabs: [
+        WorkspaceTab(id: _uuid.v4(), type: WorkspaceTabType.files, title: 'Files', path: homePath),
+      ],
+    );
+
+    connection.onDisconnected = () => _markWorkspaceDisconnected(workspaceId);
+    await _ref.read(hostRepositoryProvider).recordRecent(host.id);
+    _workspaces[workspaceId] = workspace;
+    _syncForegroundService();
+    notifyListeners();
+    return workspace;
+  }
+
+  Future<List<RemoteTmuxSession>> listRemoteTmuxSessions(String workspaceId) async {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null || !workspace.connection.isConnected) {
+      throw StateError('Connection lost');
+    }
+
+    final remoteSessions = await TmuxStartup.listRemoteSessions(workspace.connection);
+    final bookmarks = await _ref.read(resumableSessionStoreProvider).list();
+    final cwdByName = <String, String>{};
+    for (final bookmark in bookmarks) {
+      if (bookmark.hostId == workspace.hostId) {
+        cwdByName[bookmark.tmuxSessionName] = bookmark.cwd;
+      }
+    }
+
+    return remoteSessions
+        .map(
+          (session) => RemoteTmuxSession(
+            name: session.name,
+            cwd: _preferSessionCwd(session.cwd, cwdByName[session.name]),
+          ),
+        )
+        .toList();
+  }
+
+  /// Prefer the most useful path for display and post-attach navigation.
+  String? _preferSessionCwd(String? tmuxCwd, String? bookmarkCwd) {
+    final tmux = _normalizePath(tmuxCwd);
+    final bookmark = _normalizePath(bookmarkCwd);
+    if (bookmark != null &&
+        tmux != null &&
+        _looksLikeHomePath(tmux) &&
+        bookmark.length > tmux.length) {
+      return bookmark;
+    }
+    if (tmux != null && tmux.isNotEmpty) return tmux;
+    if (bookmark != null && bookmark.isNotEmpty) return bookmark;
+    return null;
+  }
+
+  String? _normalizePath(String? path) {
+    if (path == null) return null;
+    final trimmed = path.trim();
+    if (trimmed.isEmpty || trimmed == '~') return null;
+    return trimmed;
+  }
+
+  bool _looksLikeHomePath(String path) {
+    return RegExp(r'^/home/[^/]+$').hasMatch(path) || RegExp(r'^/Users/[^/]+$').hasMatch(path);
+  }
+
+  Future<({String workspaceId, TerminalPane pane})> attachToTmuxSession(
+    String workspaceId,
+    String sessionName, {
+    String? cwd,
+  }) async {
+    final workspace = _workspaces[workspaceId];
+    if (workspace == null) throw StateError('Workspace not found');
+
+    final open = findWorkspaceByTmuxSession(workspace.hostId, sessionName);
+    if (open != null) {
+      focusTmuxSession(open.id, sessionName);
+      return (
+        workspaceId: open.id,
+        pane: open.terminals.firstWhere(
+          (p) => p.useTmux && p.tmuxSessionName == sessionName,
+        ),
+      );
+    }
+
+    final pane = await addTerminal(
+      workspaceId,
+      cwd: _preferSessionCwd(cwd, null) ?? '~',
+      tmuxSessionName: sessionName,
+      useTmux: true,
+      resumeOnly: true,
+      tmuxModeOverride: HostTmuxMode.attachExisting,
+    );
+    return (workspaceId: workspaceId, pane: pane);
   }
 
   Future<Workspace> createWorkspace({
@@ -404,6 +532,8 @@ class WorkspaceManager extends ChangeNotifier {
     String? cwd,
     String? tmuxSessionName,
     bool useTmux = true,
+    bool resumeOnly = false,
+    HostTmuxMode? tmuxModeOverride,
   }) async {
     final workspace = _workspaces[workspaceId];
     if (workspace == null) throw StateError('Workspace not found');
@@ -412,7 +542,8 @@ class WorkspaceManager extends ChangeNotifier {
 
     final paneId = _uuid.v4();
     final channelId = _uuid.v4();
-    final paneCwd = cwd ?? workspace.terminals.first.cwd;
+    final paneCwd = cwd ??
+        (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~');
     final name = useTmux
         ? (tmuxSessionName ??
             TmuxStartup.suggestName(
@@ -421,6 +552,16 @@ class WorkspaceManager extends ChangeNotifier {
               paneIndex: workspace.terminals.length,
             ))
         : 'shell-${paneId.substring(0, 8)}';
+
+    if (useTmux) {
+      final open = findWorkspaceByTmuxSession(workspace.hostId, name);
+      if (open != null) {
+        focusTmuxSession(open.id, name);
+        return open.terminals.firstWhere(
+          (p) => p.useTmux && p.tmuxSessionName == name,
+        );
+      }
+    }
 
     await workspace.connection.openShell(channelId: channelId);
     final pane = TerminalPane(
@@ -435,11 +576,15 @@ class WorkspaceManager extends ChangeNotifier {
 
     workspace.terminals.add(pane);
     _bindPane(workspace, pane);
+    final tmuxMode = pane.useTmux
+        ? (tmuxModeOverride ?? _resolveTmuxMode(host, settings))
+        : HostTmuxMode.off;
     await _runPaneStartup(
       workspace: workspace,
       pane: pane,
       host: host,
-      tmuxMode: pane.useTmux ? _resolveTmuxMode(host, settings) : HostTmuxMode.off,
+      tmuxMode: tmuxMode,
+      resumeOnly: resumeOnly,
     );
     await _saveBookmark(workspace, pane, host);
     workspace.activeTabIndex = workspace.terminals.length - 1;
@@ -475,10 +620,9 @@ class WorkspaceManager extends ChangeNotifier {
       await _saveBookmark(workspace, pane, host);
     }
     if (workspace.terminals.isEmpty) {
-      await closeWorkspace(workspaceId);
-    } else {
-      notifyListeners();
+      workspace.activeTabIndex = 0;
     }
+    notifyListeners();
   }
 
   Future<void> endPaneSession(String workspaceId, String paneId) async {
@@ -642,36 +786,23 @@ class WorkspaceManager extends ChangeNotifier {
   void sendCommand(String workspaceId, String command, {String? paneId}) {
     final workspace = _workspaces[workspaceId];
     if (workspace == null || !workspace.connection.isConnected) return;
-    if (workspace.broadcastEnabled) {
-      for (final pane in workspace.terminals) {
-        workspace.connection.write(pane.channelId, '$command\n');
-        pane.state = SessionState.processing;
-      }
-    } else {
-      final pane = paneId != null
-          ? workspace.terminals.firstWhere((p) => p.id == paneId)
-          : workspace.activeTerminal;
-      if (pane == null) return;
-      workspace.connection.write(pane.channelId, '$command\n');
-      pane.state = SessionState.processing;
-    }
+    final pane = paneId != null
+        ? workspace.terminals.firstWhere((p) => p.id == paneId)
+        : workspace.activeTerminal;
+    if (pane == null) return;
+    workspace.connection.write(pane.channelId, '$command\n');
+    pane.state = SessionState.processing;
     notifyListeners();
   }
 
   void sendBytes(String workspaceId, Uint8List bytes, {String? paneId}) {
     final workspace = _workspaces[workspaceId];
     if (workspace == null || !workspace.connection.isConnected) return;
-    if (workspace.broadcastEnabled) {
-      for (final pane in workspace.terminals) {
-        workspace.connection.writeBytes(pane.channelId, bytes);
-      }
-    } else {
-      final pane = paneId != null
-          ? workspace.terminals.firstWhere((p) => p.id == paneId)
-          : workspace.activeTerminal;
-      if (pane == null) return;
-      workspace.connection.writeBytes(pane.channelId, bytes);
-    }
+    final pane = paneId != null
+        ? workspace.terminals.firstWhere((p) => p.id == paneId)
+        : workspace.activeTerminal;
+    if (pane == null) return;
+    workspace.connection.writeBytes(pane.channelId, bytes);
   }
 
   Future<List<RemoteFileEntry>> listDirectory(String workspaceId, String path) async {
@@ -716,14 +847,12 @@ class WorkspaceManager extends ChangeNotifier {
     String workspaceId, {
     int? activeTabIndex,
     WorkspaceViewMode? viewMode,
-    bool? broadcastEnabled,
     List<WorkspaceTab>? auxTabs,
   }) {
     final w = _workspaces[workspaceId];
     if (w == null) return;
     if (activeTabIndex != null) w.activeTabIndex = activeTabIndex;
     if (viewMode != null) w.viewMode = viewMode;
-    if (broadcastEnabled != null) w.broadcastEnabled = broadcastEnabled;
     if (auxTabs != null) w.auxTabs = auxTabs;
     notifyListeners();
   }

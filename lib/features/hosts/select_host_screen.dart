@@ -7,6 +7,7 @@ import '../../core/theme/app_typography.dart';
 import '../../core/theme/obsidian_colors.dart';
 import '../../models/host.dart';
 import '../../providers/hosts_provider.dart';
+import '../../utils/connect_host.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/status_chip.dart';
 
@@ -60,7 +61,7 @@ class _SelectHostScreenState extends ConsumerState<SelectHostScreen> {
                 ...recent.map(
                   (h) => Padding(
                     padding: const EdgeInsets.only(bottom: AppSpacing.md),
-                    child: _RecentHostCard(host: h, onTap: () => context.push('/sessions/new/path?host=${h.id}')),
+                    child: _RecentHostCard(host: h, onTap: () => connectHostAndOpen(context, ref, h)),
                   ),
                 ),
               ],
@@ -81,7 +82,7 @@ class _SelectHostScreenState extends ConsumerState<SelectHostScreen> {
                           shape: BoxShape.circle,
                         ),
                       ),
-                      onTap: () => context.push('/sessions/new/path?host=${h.id}'),
+                      onTap: () => connectHostAndOpen(context, ref, h),
                     ),
                   ),
                 ],

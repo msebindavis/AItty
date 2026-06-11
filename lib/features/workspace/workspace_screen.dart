@@ -13,6 +13,7 @@ import 'package:xterm/xterm.dart';
 import '../../core/constants/spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/obsidian_colors.dart';
+import '../../models/host.dart';
 import '../../models/remote_file_entry.dart';
 import '../../models/session.dart';
 import '../../models/workspace.dart';
@@ -20,7 +21,9 @@ import '../../models/workspace_tab.dart';
 import '../../services/workspace_repository.dart';
 import '../../services/workspace_manager.dart';
 import '../../utils/terminal_input.dart';
+import '../../utils/open_workspace.dart';
 import '../../widgets/new_folder_dialog.dart';
+import '../../widgets/section_header.dart';
 import '../../widgets/session_name_dialog.dart';
 import '../../widgets/tmux_missing_dialog.dart';
 import 'command_editor_sheet.dart';
@@ -83,7 +86,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     final terminalNames = workspace.terminals.map((p) => p.tmuxSessionName).join(',');
     final auxIds = workspace.auxTabs.map((t) => t.id).join(',');
     return '${workspace.aggregateState.index}|${workspace.state.index}|$terminalIds|$terminalNames|$auxIds|'
-        '${workspace.activeTabIndex}|${workspace.pendingImagePaths.length}|${workspace.broadcastEnabled}';
+        '${workspace.activeTabIndex}|${workspace.pendingImagePaths.length}';
   }
 
   @override
@@ -164,6 +167,15 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       );
     }
 
+    if (workspace.terminals.isEmpty) {
+      return _HostSessionHub(
+        workspaceId: widget.workspaceId,
+        workspace: workspace,
+        onBack: _exitWorkspace,
+        onEndWorkspace: _endWorkspace,
+      );
+    }
+
     final totalTabs = workspace.terminals.length + workspace.auxTabs.length;
     if (totalTabs == 0) {
       return Scaffold(
@@ -189,7 +201,6 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
               onCloseTerminal: (pane) => _closeTerminalTab(pane),
               onCloseAux: (auxIndex) => _closeAuxTab(auxIndex),
               onPaneOverflow: (pane) => _showPaneOverflow(pane),
-              onToggleBroadcast: () => _toggleBroadcast(workspace),
               onBack: _exitWorkspace,
               onEndWorkspace: _endWorkspace,
               onAdd: () => _showAddTabMenu(workspace),
@@ -368,13 +379,6 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   void _closeAuxTab(int auxIndex) {
     if (workspaceHasOnlyOneTab) return;
     _workspaceManager.removeAuxTab(widget.workspaceId, auxIndex);
-  }
-
-  void _toggleBroadcast(Workspace workspace) {
-    _workspaceManager.updateWorkspaceUi(
-          widget.workspaceId,
-          broadcastEnabled: !workspace.broadcastEnabled,
-        );
   }
 
   Future<void> _showPaneOverflow(TerminalPane pane) async {
@@ -683,10 +687,18 @@ class _FilesTabState extends ConsumerState<_FilesTab> {
       _error = null;
     });
     try {
-      final entries = await ref.read(workspaceManagerProvider).listDirectory(widget.workspaceId, _path);
+      final raw = await ref.read(workspaceManagerProvider).listDirectory(widget.workspaceId, _path);
       if (!mounted) return;
+      final children = raw.where((e) => e.name != '.' && e.name != '..').toList()
+        ..sort((a, b) {
+          if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
       setState(() {
-        _entries = entries;
+        _entries = [
+          const RemoteFileEntry(name: '..', isDirectory: true, permissions: 'drwxr-xr-x'),
+          ...children,
+        ];
         _loading = false;
       });
     } catch (e) {
@@ -990,7 +1002,6 @@ class _WorkspaceTabBar extends StatelessWidget {
     required this.onCloseTerminal,
     required this.onCloseAux,
     required this.onPaneOverflow,
-    required this.onToggleBroadcast,
     required this.onBack,
     required this.onEndWorkspace,
     required this.onAdd,
@@ -1002,7 +1013,6 @@ class _WorkspaceTabBar extends StatelessWidget {
   final ValueChanged<TerminalPane> onCloseTerminal;
   final ValueChanged<int> onCloseAux;
   final ValueChanged<TerminalPane> onPaneOverflow;
-  final VoidCallback onToggleBroadcast;
   final VoidCallback onBack;
   final VoidCallback onEndWorkspace;
   final VoidCallback onAdd;
@@ -1086,15 +1096,6 @@ class _WorkspaceTabBar extends StatelessWidget {
                 );
               },
             ),
-          ),
-          IconButton(
-            icon: Icon(
-              workspace.broadcastEnabled ? Icons.campaign : Icons.campaign_outlined,
-              color: workspace.broadcastEnabled ? ObsidianColors.primary : ObsidianColors.outline,
-              size: 20,
-            ),
-            tooltip: workspace.broadcastEnabled ? 'Broadcast on' : 'Broadcast off',
-            onPressed: onToggleBroadcast,
           ),
           IconButton(
             icon: const Icon(Icons.power_settings_new, color: ObsidianColors.error, size: 20),
@@ -1326,5 +1327,251 @@ class _AddTabTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(leading: Icon(icon, color: color), title: Text(label), onTap: onTap);
+  }
+}
+
+class _HostSessionHub extends ConsumerStatefulWidget {
+  const _HostSessionHub({
+    required this.workspaceId,
+    required this.workspace,
+    required this.onBack,
+    required this.onEndWorkspace,
+  });
+
+  final String workspaceId;
+  final Workspace workspace;
+  final VoidCallback onBack;
+  final Future<void> Function() onEndWorkspace;
+
+  @override
+  ConsumerState<_HostSessionHub> createState() => _HostSessionHubState();
+}
+
+class _HostSessionHubState extends ConsumerState<_HostSessionHub> {
+  List<RemoteTmuxSession>? _sessions;
+  String? _error;
+  bool _loading = true;
+  bool _attaching = false;
+  Host? _host;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final host = await ref.read(hostRepositoryProvider).getHost(widget.workspace.hostId);
+      if (!mounted) return;
+      _host = host;
+      if (!widget.workspace.connection.isConnected) {
+        setState(() {
+          _sessions = [];
+          _loading = false;
+        });
+        return;
+      }
+      final sessions = await ref.read(workspaceManagerProvider).listRemoteTmuxSessions(widget.workspaceId);
+      if (!mounted) return;
+      setState(() {
+        _sessions = sessions;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _attachSession(RemoteTmuxSession session) async {
+    if (_attaching) return;
+    setState(() => _attaching = true);
+    try {
+      final resolved = await TmuxAvailability.resolve(
+        context: context,
+        connection: widget.workspace.connection,
+        wantsTmux: true,
+      );
+      if (!mounted || resolved == null) return;
+      if (!resolved.useTmux) {
+        await _openPlainShell(cwd: session.cwd ?? '~');
+        return;
+      }
+      final result = await ref.read(workspaceManagerProvider).attachToTmuxSession(
+            widget.workspaceId,
+            session.name,
+            cwd: session.cwd,
+          );
+      if (mounted && result.workspaceId != widget.workspaceId) {
+        openWorkspace(context, result.workspaceId);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Attach failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _attaching = false);
+    }
+  }
+
+  Future<void> _openPlainShell({String cwd = '~'}) async {
+    if (_attaching) return;
+    setState(() => _attaching = true);
+    try {
+      await ref.read(workspaceManagerProvider).addTerminal(
+            widget.workspaceId,
+            cwd: cwd,
+            useTmux: false,
+          );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open shell: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _attaching = false);
+    }
+  }
+
+  void _openNewTerminal() {
+    context.push('/sessions/new/path?host=${widget.workspace.hostId}&workspace=${widget.workspaceId}');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final host = _host;
+    final connected = widget.workspace.connection.isConnected;
+    final state = widget.workspace.aggregateState;
+
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: widget.onBack),
+        title: Text(host?.label ?? widget.workspace.name),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.power_settings_new, color: ObsidianColors.error),
+            tooltip: 'End workspace',
+            onPressed: widget.onEndWorkspace,
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(AppSpacing.marginMobile),
+          children: [
+            Row(
+              children: [
+                Icon(
+                  connected ? Icons.link : Icons.link_off,
+                  size: 18,
+                  color: connected ? ObsidianColors.secondary : ObsidianColors.error,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    host?.connectionString ?? widget.workspace.hostId,
+                    style: AppTypography.mono(size: 13, color: ObsidianColors.onSurfaceVariant),
+                  ),
+                ),
+                if (state == SessionState.reconnecting)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+            if (!connected) ...[
+              const SizedBox(height: AppSpacing.md),
+              Material(
+                color: ObsidianColors.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.cloud_off, size: 18, color: ObsidianColors.error),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          'Connection lost.',
+                          style: AppTypography.inter(size: 13, color: ObsidianColors.error),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => ref.read(workspaceManagerProvider).reconnect(widget.workspaceId),
+                        child: const Text('Reconnect'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.lg),
+            const SectionHeader('ACTIVE TMUX SESSIONS'),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                child: Text(_error!, style: AppTypography.mono(size: 12, color: ObsidianColors.error)),
+              )
+            else if (_sessions == null || _sessions!.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                child: Text(
+                  connected ? 'No tmux sessions running on this host.' : 'Connect to list tmux sessions.',
+                  style: AppTypography.inter(size: 14, color: ObsidianColors.onSurfaceVariant),
+                ),
+              )
+            else
+              ..._sessions!.map(
+                (session) => Card(
+                  margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: ListTile(
+                    leading: const Icon(Icons.terminal, color: ObsidianColors.primary),
+                    title: Text(session.name, style: AppTypography.mono(size: 14)),
+                    subtitle: session.cwd != null
+                        ? Text(session.cwd!, style: AppTypography.mono(size: 12, color: ObsidianColors.onSurfaceVariant))
+                        : null,
+                    trailing: _attaching
+                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                        : FilledButton(
+                            onPressed: connected && !_attaching ? () => _attachSession(session) : null,
+                            child: const Text('Attach'),
+                          ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: AppSpacing.lg),
+            FilledButton.icon(
+              onPressed: connected && !_attaching ? _openNewTerminal : null,
+              icon: const Icon(Icons.add),
+              label: const Text('New terminal'),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            OutlinedButton.icon(
+              onPressed: connected && !_attaching ? () => _openPlainShell() : null,
+              icon: const Icon(Icons.terminal_outlined),
+              label: const Text('Plain shell'),
+            ),
+            const SizedBox(height: AppSpacing.xl),
+          ],
+        ),
+      ),
+    );
   }
 }

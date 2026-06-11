@@ -79,7 +79,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         parentNavigatorKey: _rootNavigatorKey,
         path: '/sessions/new/path',
-        builder: (context, state) => SelectPathScreen(hostId: state.uri.queryParameters['host']),
+        builder: (context, state) => SelectPathScreen(
+          hostId: state.uri.queryParameters['host'],
+          workspaceId: state.uri.queryParameters['workspace'],
+        ),
       ),
       GoRoute(
         parentNavigatorKey: _rootNavigatorKey,

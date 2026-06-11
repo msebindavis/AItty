@@ -56,7 +56,7 @@ class SshConnection {
     Duration? keepAliveInterval,
     Duration timeout = const Duration(seconds: 20),
   }) async {
-    final socket = await SSHSocket.connect(
+    final socket = await _connectTcpSocket(
       host.hostname,
       host.port,
       timeout: timeout,
@@ -282,4 +282,63 @@ class SshConnection {
     _client.close();
     await _client.done;
   }
+}
+
+class _IoSshSocket implements SSHSocket {
+  _IoSshSocket(this._socket);
+
+  final Socket _socket;
+
+  @override
+  Stream<Uint8List> get stream => _socket;
+
+  @override
+  StreamSink<List<int>> get sink => _socket;
+
+  @override
+  Future<void> close() => _socket.close();
+
+  @override
+  Future<void> get done => _socket.done;
+
+  @override
+  void destroy() => _socket.destroy();
+}
+
+/// Prefer IPv4 when both stacks resolve — avoids "No route to host" on IPv4-only networks.
+Future<SSHSocket> _connectTcpSocket(
+  String host,
+  int port, {
+  Duration? timeout,
+}) async {
+  final trimmed = host.trim();
+  final literal = InternetAddress.tryParse(trimmed);
+  final addresses = literal != null
+      ? [literal]
+      : await InternetAddress.lookup(trimmed);
+
+  if (addresses.isEmpty) {
+    throw SocketException('Failed host lookup: $trimmed');
+  }
+
+  final ordered = List<InternetAddress>.from(addresses)
+    ..sort((a, b) {
+      final a4 = a.type == InternetAddressType.IPv4;
+      final b4 = b.type == InternetAddressType.IPv4;
+      if (a4 == b4) return 0;
+      return a4 ? -1 : 1;
+    });
+
+  Object? lastError;
+  for (final address in ordered) {
+    try {
+      final socket = await Socket.connect(address, port, timeout: timeout);
+      return _IoSshSocket(socket);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  if (lastError != null) throw lastError;
+  throw SocketException('Could not connect to $trimmed:$port');
 }

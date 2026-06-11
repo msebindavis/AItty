@@ -20,9 +20,12 @@ import '../../widgets/section_header.dart';
 enum _PathView { recents, browse }
 
 class SelectPathScreen extends ConsumerStatefulWidget {
-  const SelectPathScreen({super.key, this.hostId});
+  const SelectPathScreen({super.key, this.hostId, this.workspaceId});
 
   final String? hostId;
+  final String? workspaceId;
+
+  bool get isTerminalOnly => workspaceId != null;
 
   @override
   ConsumerState<SelectPathScreen> createState() => _SelectPathScreenState();
@@ -39,6 +42,7 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
   bool _loading = true;
   String? _error;
   bool _connecting = false;
+  bool _ownsConnection = false;
   _PathView _view = _PathView.recents;
 
   List<RemoteFileEntry> get _displayEntries {
@@ -76,7 +80,9 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
 
   @override
   void dispose() {
-    _connection?.disconnect();
+    if (_ownsConnection) {
+      _connection?.disconnect();
+    }
     super.dispose();
   }
 
@@ -110,14 +116,29 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
         }
       }
       if (host == null) throw StateError('Host not found');
-      final conn = await SshConnection.connect(
-        host: host,
-        hosts: ref.read(hostRepositoryProvider),
-        keys: ref.read(sshKeyRepositoryProvider),
-        knownHosts: ref.read(knownHostsStoreProvider),
-      );
+
+      SshConnection conn;
+      if (widget.workspaceId != null) {
+        final workspace = ref.read(workspaceManagerProvider).getWorkspace(widget.workspaceId!);
+        if (workspace == null || !workspace.connection.isConnected) {
+          throw StateError('Workspace connection lost');
+        }
+        if (workspace.hostId != hostId) {
+          throw StateError('Host does not match workspace');
+        }
+        conn = workspace.connection;
+        _ownsConnection = false;
+      } else {
+        conn = await SshConnection.connect(
+          host: host,
+          hosts: ref.read(hostRepositoryProvider),
+          keys: ref.read(sshKeyRepositoryProvider),
+          knownHosts: ref.read(knownHostsStoreProvider),
+        );
+        _ownsConnection = true;
+      }
       if (!mounted) {
-        await conn.disconnect();
+        if (_ownsConnection) await conn.disconnect();
         return;
       }
       final recents = await ref.read(recentPathsStoreProvider).getRecentPaths(hostId);
@@ -246,10 +267,17 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
         }
       }
       if (host == null) throw StateError('Host not found');
+
+      final workspaceId = widget.workspaceId;
+      final manager = ref.read(workspaceManagerProvider);
+      final paneIndex = workspaceId != null
+          ? (manager.getWorkspace(workspaceId)?.terminals.length ?? 0)
+          : 0;
+
       final choice = await SessionNameDialog.show(
         context,
-        title: 'Start terminal',
-        initialName: await ref.read(workspaceManagerProvider).suggestSessionName(host),
+        title: workspaceId != null ? 'New terminal' : 'Start terminal',
+        initialName: await manager.suggestSessionName(host, paneIndex: paneIndex),
       );
       if (!mounted || choice == null) {
         if (mounted) setState(() => _connecting = false);
@@ -271,16 +299,35 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
       }
 
       await ref.read(recentPathsStoreProvider).recordRecentPath(hostId, _selectedDir);
-      final workspace = await ref.read(workspaceManagerProvider).createWorkspace(
+
+      if (workspaceId != null) {
+        await manager.addTerminal(
+          workspaceId,
+          cwd: _selectedDir,
+          tmuxSessionName: choice.useTmux ? choice.sessionName : null,
+          useTmux: useTmux,
+          tmuxModeOverride: useTmux ? HostTmuxMode.createNew : null,
+        );
+        if (!mounted) return;
+        _connection = null;
+        if (mounted) {
+          context.pop();
+          openWorkspace(context, workspaceId);
+        }
+        return;
+      }
+
+      final workspace = await manager.createWorkspace(
             host: host,
             cwd: _selectedDir,
             tmuxSessionName: choice.sessionName,
             name: useTmux ? choice.sessionName : host.label,
             useTmux: useTmux,
-            existing: _connection,
+            existing: _ownsConnection ? _connection : null,
           );
       if (!mounted) return;
       _connection = null;
+      _ownsConnection = false;
       if (mounted) openWorkspace(context, workspace.id, replace: true);
     } catch (e) {
       if (mounted) {
@@ -309,7 +356,7 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _onBack),
-        title: const Text('Select Path'),
+        title: Text(widget.isTerminalOnly ? 'New Terminal Path' : 'Select Path'),
         actions: [
           if (inBrowse && _connection != null && !_loading && _error == null)
             IconButton(
@@ -369,7 +416,9 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
                   const SizedBox(width: AppSpacing.sm),
                   Flexible(
                     child: Text(
-                      "Select '$_selectedDirName'",
+                      widget.isTerminalOnly
+                          ? "Open terminal in '$_selectedDirName'"
+                          : "Select '$_selectedDirName'",
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
                       style: AppTypography.mono(size: 14, weight: FontWeight.w700, color: ObsidianColors.onPrimary),
