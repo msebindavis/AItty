@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:xterm/xterm.dart';
 
 import '../models/app_settings.dart';
+import '../models/git_models.dart';
 import '../models/host.dart';
 import '../models/remote_file_entry.dart';
 import '../models/resumable_session.dart';
@@ -13,6 +14,7 @@ import '../models/session.dart';
 import '../models/workspace.dart';
 import '../models/workspace_tab.dart';
 import '../models/workspace_template.dart';
+import '../utils/git_parsers.dart';
 import '../utils/session_state_detector.dart';
 import 'app_settings_repository.dart';
 import 'host_repository.dart';
@@ -99,8 +101,20 @@ class WorkspaceManager extends ChangeNotifier {
     final index = workspace.terminals.indexWhere(
       (p) => p.useTmux && p.tmuxSessionName == tmuxSessionName,
     );
-    if (index >= 0) workspace.activeTabIndex = index;
+    if (index >= 0) {
+      workspace.activeTabIndex = index;
+      _syncPrimaryFilesTabPath(workspace, workspace.terminals[index].cwd);
+    }
     notifyListeners();
+  }
+
+  /// Keep the default Files tab aligned with the active terminal's working directory.
+  void _syncPrimaryFilesTabPath(Workspace workspace, String cwd) {
+    final index = workspace.auxTabs.indexWhere((t) => t.type == WorkspaceTabType.files);
+    if (index < 0) return;
+    final tab = workspace.auxTabs[index];
+    if (tab.path == cwd) return;
+    workspace.auxTabs[index] = tab.copyWith(path: cwd);
   }
 
   Future<void> renameWorkspace(String workspaceId, String newName) async {
@@ -588,6 +602,7 @@ class WorkspaceManager extends ChangeNotifier {
     );
     await _saveBookmark(workspace, pane, host);
     workspace.activeTabIndex = workspace.terminals.length - 1;
+    _syncPrimaryFilesTabPath(workspace, pane.cwd);
     notifyListeners();
     return pane;
   }
@@ -829,9 +844,245 @@ class WorkspaceManager extends ChangeNotifier {
     await w.connection.uploadBytes(data, remotePath);
   }
 
-  Future<String> runGitDiff(String workspaceId, String cwd) async {
-    final w = _workspaces[workspaceId]!;
-    return w.connection.executeCapture('cd ${_shellQuote(cwd)} && git diff 2>/dev/null || git diff');
+  Future<SshConnection> _requireConnection(String workspaceId) async {
+    final w = _workspaces[workspaceId];
+    if (w == null || !w.connection.isConnected) throw StateError('Connection lost');
+    return w.connection;
+  }
+
+  String _gitInRepo(String repoRoot, String args) => 'cd ${_shellQuote(repoRoot)} && git $args';
+
+  Future<String?> resolveGitRepoRoot(String workspaceId, String cwd) async {
+    final conn = await _requireConnection(workspaceId);
+    final result = await conn.executeResult(
+      'cd ${_shellQuote(cwd)} && git rev-parse --show-toplevel 2>/dev/null',
+      timeout: const Duration(seconds: 10),
+    );
+    if (result.exitCode != 0) return null;
+    return result.stdout.trim();
+  }
+
+  Future<GitRepoSnapshot> loadGitSnapshot(String workspaceId, String cwd) async {
+    final conn = await _requireConnection(workspaceId);
+    final repoRoot = await resolveGitRepoRoot(workspaceId, cwd);
+    if (repoRoot == null) throw GitNotARepositoryException();
+
+    const delimiter = '---GITMGR---';
+    final script = '''
+cd ${_shellQuote(repoRoot)} && \\
+BR=\$(git branch --show-current 2>/dev/null) && \\
+if [ -z "\$BR" ]; then echo "DETACHED:\$(git rev-parse --short HEAD)"; else echo "\$BR"; fi && \\
+echo '$delimiter' && \\
+git rev-parse --abbrev-ref @{u} 2>/dev/null || true && \\
+echo '$delimiter' && \\
+git rev-list --left-right --count @{u}...HEAD 2>/dev/null || true && \\
+echo '$delimiter' && \\
+git remote get-url origin 2>/dev/null || true && \\
+echo '$delimiter' && \\
+git status --porcelain
+''';
+
+    final result = await conn.executeResult(script.trim(), timeout: const Duration(seconds: 20));
+    final snapshot = GitParsers.parseSnapshot(result.stdout, repoRoot);
+
+    final branchResult = await conn.executeCapture(
+      _gitInRepo(repoRoot, 'branch -a --no-color'),
+      timeout: const Duration(seconds: 15),
+    );
+    final branches = GitParsers.parseBranches(branchResult, snapshot.branch);
+
+    return GitRepoSnapshot(
+      repoRoot: snapshot.repoRoot,
+      branch: snapshot.branch,
+      detached: snapshot.detached,
+      staged: snapshot.staged,
+      unstaged: snapshot.unstaged,
+      untracked: snapshot.untracked,
+      conflicted: snapshot.conflicted,
+      ahead: snapshot.ahead,
+      behind: snapshot.behind,
+      upstream: snapshot.upstream,
+      remoteUrl: snapshot.remoteUrl,
+      branches: branches,
+    );
+  }
+
+  Future<String> gitFileDiff(
+    String workspaceId,
+    String repoRoot,
+    String path, {
+    bool staged = false,
+  }) async {
+    final conn = await _requireConnection(workspaceId);
+    final flag = staged ? '--cached' : '';
+    final result = await conn.executeResult(
+      _gitInRepo(repoRoot, 'diff $flag -- ${_shellQuote(path)}'),
+      timeout: const Duration(seconds: 30),
+    );
+    return result.stdout;
+  }
+
+  Future<void> gitStageFile(String workspaceId, String repoRoot, String path) async {
+    final conn = await _requireConnection(workspaceId);
+    final ok = await conn.executeSuccess(_gitInRepo(repoRoot, 'add -- ${_shellQuote(path)}'));
+    if (!ok) throw StateError('Failed to stage file');
+  }
+
+  Future<void> gitUnstageFile(String workspaceId, String repoRoot, String path) async {
+    final conn = await _requireConnection(workspaceId);
+    final ok = await conn.executeSuccess(
+      _gitInRepo(repoRoot, 'restore --staged -- ${_shellQuote(path)}'),
+    );
+    if (!ok) throw StateError('Failed to unstage file');
+  }
+
+  Future<void> gitStageAll(String workspaceId, String repoRoot) async {
+    final conn = await _requireConnection(workspaceId);
+    final ok = await conn.executeSuccess(_gitInRepo(repoRoot, 'add -A'));
+    if (!ok) throw StateError('Failed to stage all');
+  }
+
+  Future<void> gitUnstageAll(String workspaceId, String repoRoot) async {
+    final conn = await _requireConnection(workspaceId);
+    final ok = await conn.executeSuccess(_gitInRepo(repoRoot, 'reset HEAD'));
+    if (!ok) throw StateError('Failed to unstage all');
+  }
+
+  Future<void> gitDiscardFile(String workspaceId, String repoRoot, String path) async {
+    final conn = await _requireConnection(workspaceId);
+    final ok = await conn.executeSuccess(
+      _gitInRepo(repoRoot, 'restore --worktree -- ${_shellQuote(path)}'),
+    );
+    if (!ok) throw StateError('Failed to discard changes');
+  }
+
+  Future<GitCommandResult> gitCommit(
+    String workspaceId,
+    String repoRoot,
+    String summary, {
+    String? description,
+  }) async {
+    final conn = await _requireConnection(workspaceId);
+    final trimmed = summary.trim();
+    if (trimmed.isEmpty) {
+      return const GitCommandResult(success: false, message: 'Commit summary is required');
+    }
+    var cmd = _gitInRepo(repoRoot, 'commit -m ${_shellQuote(trimmed)}');
+    final body = description?.trim();
+    if (body != null && body.isNotEmpty) {
+      cmd = _gitInRepo(repoRoot, 'commit -m ${_shellQuote(trimmed)} -m ${_shellQuote(body)}');
+    }
+    final result = await conn.executeResult(cmd, timeout: const Duration(seconds: 30));
+    final message = result.stderr.trim().isNotEmpty ? result.stderr.trim() : result.stdout.trim();
+    return GitCommandResult(
+      success: result.exitCode == 0,
+      message: message.isEmpty ? (result.exitCode == 0 ? 'Committed' : 'Commit failed') : message,
+    );
+  }
+
+  Future<GitCommandResult> gitFetch(String workspaceId, String repoRoot) async {
+    final conn = await _requireConnection(workspaceId);
+    final result = await conn.executeResult(
+      _gitInRepo(repoRoot, 'fetch'),
+      timeout: const Duration(seconds: 60),
+    );
+    return _gitResult(result.stdout, result.stderr, result.exitCode);
+  }
+
+  Future<GitCommandResult> gitPull(String workspaceId, String repoRoot) async {
+    final conn = await _requireConnection(workspaceId);
+    final result = await conn.executeResult(
+      _gitInRepo(repoRoot, 'pull --ff-only'),
+      timeout: const Duration(seconds: 60),
+    );
+    if (result.exitCode != 0 && result.stderr.contains('Not possible to fast-forward')) {
+      final mergeResult = await conn.executeResult(
+        _gitInRepo(repoRoot, 'pull'),
+        timeout: const Duration(seconds: 60),
+      );
+      return _gitResult(mergeResult.stdout, mergeResult.stderr, mergeResult.exitCode);
+    }
+    return _gitResult(result.stdout, result.stderr, result.exitCode);
+  }
+
+  Future<GitCommandResult> gitPush(String workspaceId, String repoRoot) async {
+    final conn = await _requireConnection(workspaceId);
+    final result = await conn.executeResult(
+      _gitInRepo(repoRoot, 'push'),
+      timeout: const Duration(seconds: 60),
+    );
+    return _gitResult(result.stdout, result.stderr, result.exitCode);
+  }
+
+  Future<GitCommandResult> gitCheckoutBranch(String workspaceId, String repoRoot, String branch) async {
+    final conn = await _requireConnection(workspaceId);
+    final localBranch = branch.startsWith('remotes/') ? branch.split('/').skip(2).join('/') : branch;
+    final result = await conn.executeResult(
+      _gitInRepo(repoRoot, 'switch ${_shellQuote(localBranch)}'),
+      timeout: const Duration(seconds: 30),
+    );
+    if (result.exitCode != 0) {
+      final fallback = await conn.executeResult(
+        _gitInRepo(repoRoot, 'checkout ${_shellQuote(localBranch)}'),
+        timeout: const Duration(seconds: 30),
+      );
+      return _gitResult(fallback.stdout, fallback.stderr, fallback.exitCode);
+    }
+    return _gitResult(result.stdout, result.stderr, result.exitCode);
+  }
+
+  Future<GitCommandResult> gitCreateBranch(
+    String workspaceId,
+    String repoRoot,
+    String name, {
+    bool checkout = true,
+  }) async {
+    final conn = await _requireConnection(workspaceId);
+    final branchName = name.trim();
+    final cmd = checkout
+        ? _gitInRepo(repoRoot, 'switch -c ${_shellQuote(branchName)}')
+        : _gitInRepo(repoRoot, 'branch ${_shellQuote(branchName)}');
+    final result = await conn.executeResult(cmd, timeout: const Duration(seconds: 30));
+    if (result.exitCode != 0 && checkout) {
+      final fallback = await conn.executeResult(
+        _gitInRepo(repoRoot, 'checkout -b ${_shellQuote(branchName)}'),
+        timeout: const Duration(seconds: 30),
+      );
+      return _gitResult(fallback.stdout, fallback.stderr, fallback.exitCode);
+    }
+    return _gitResult(result.stdout, result.stderr, result.exitCode);
+  }
+
+  Future<List<GitCommitInfo>> gitLog(String workspaceId, String repoRoot, {int limit = 50}) async {
+    final conn = await _requireConnection(workspaceId);
+    final output = await conn.executeCapture(
+      _gitInRepo(
+        repoRoot,
+        "log -n $limit --format='%H%x00%h%x00%s%x00%an%x00%ar'",
+      ),
+      timeout: const Duration(seconds: 20),
+    );
+    return GitParsers.parseLog(output);
+  }
+
+  Future<String> gitShowCommit(String workspaceId, String repoRoot, String sha) async {
+    final conn = await _requireConnection(workspaceId);
+    final result = await conn.executeResult(
+      _gitInRepo(repoRoot, 'show --format=fuller ${_shellQuote(sha)}'),
+      timeout: const Duration(seconds: 30),
+    );
+    if (result.exitCode != 0) {
+      throw StateError(result.stderr.trim().isNotEmpty ? result.stderr.trim() : 'Could not load commit');
+    }
+    return result.stdout;
+  }
+
+  GitCommandResult _gitResult(String stdout, String stderr, int? exitCode) {
+    final message = stderr.trim().isNotEmpty ? stderr.trim() : stdout.trim();
+    return GitCommandResult(
+      success: exitCode == 0,
+      message: message.isEmpty ? (exitCode == 0 ? 'OK' : 'Command failed') : message,
+    );
   }
 
   Future<int> ensureBrowserForward(String workspaceId, String tabId, int remotePort) async {
@@ -851,7 +1102,12 @@ class WorkspaceManager extends ChangeNotifier {
   }) {
     final w = _workspaces[workspaceId];
     if (w == null) return;
-    if (activeTabIndex != null) w.activeTabIndex = activeTabIndex;
+    if (activeTabIndex != null) {
+      w.activeTabIndex = activeTabIndex;
+      if (activeTabIndex < w.terminals.length) {
+        _syncPrimaryFilesTabPath(w, w.terminals[activeTabIndex].cwd);
+      }
+    }
     if (viewMode != null) w.viewMode = viewMode;
     if (auxTabs != null) w.auxTabs = auxTabs;
     notifyListeners();

@@ -27,6 +27,7 @@ import '../../widgets/section_header.dart';
 import '../../widgets/session_name_dialog.dart';
 import '../../widgets/tmux_missing_dialog.dart';
 import 'command_editor_sheet.dart';
+import 'git_manager_tab.dart';
 import 'terminal_theme.dart';
 import 'tmux_scroll_capture.dart';
 
@@ -84,8 +85,8 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     if (workspace == null) return 'ended';
     final terminalIds = workspace.terminals.map((p) => p.id).join(',');
     final terminalNames = workspace.terminals.map((p) => p.tmuxSessionName).join(',');
-    final auxIds = workspace.auxTabs.map((t) => t.id).join(',');
-    return '${workspace.aggregateState.index}|${workspace.state.index}|$terminalIds|$terminalNames|$auxIds|'
+    final auxMeta = workspace.auxTabs.map((t) => '${t.id}:${t.path ?? ''}').join(',');
+    return '${workspace.aggregateState.index}|${workspace.state.index}|$terminalIds|$terminalNames|$auxMeta|'
         '${workspace.activeTabIndex}|${workspace.pendingImagePaths.length}';
   }
 
@@ -349,9 +350,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     return switch (aux.type) {
       WorkspaceTabType.files => _FilesTab(workspaceId: widget.workspaceId, tab: aux),
       WorkspaceTabType.browser => _BrowserTab(workspaceId: widget.workspaceId, tab: aux),
-      WorkspaceTabType.gitDiff => _GitDiffTab(
+      WorkspaceTabType.gitDiff => GitManagerTab(
           workspaceId: widget.workspaceId,
-          cwd: workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~',
+          cwd: aux.path ?? (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~'),
+          onOpenTerminal: workspace.terminals.isNotEmpty ? () => _setActiveTab(0) : null,
         ),
       WorkspaceTabType.terminal => const SizedBox.shrink(),
     };
@@ -464,16 +466,17 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                 workspace,
                 WorkspaceTabType.files,
                 'Files',
-                path: workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~',
+                path: workspace.activeTerminal?.cwd ??
+                    (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~'),
               );
             }),
             _AddTabTile(Icons.language, ObsidianColors.secondary, 'New Browser', () {
               Navigator.pop(ctx);
               _addAuxTab(workspace, WorkspaceTabType.browser, 'Browser');
             }),
-            _AddTabTile(Icons.difference_outlined, ObsidianColors.error, 'New Git Diff', () {
+            _AddTabTile(Icons.difference_outlined, ObsidianColors.error, 'Git Manager', () {
               Navigator.pop(ctx);
-              _addAuxTab(workspace, WorkspaceTabType.gitDiff, 'Git Diff');
+              _addAuxTab(workspace, WorkspaceTabType.gitDiff, 'Git Manager');
             }),
             _AddTabTile(Icons.drive_file_rename_outline, ObsidianColors.primary, 'Rename workspace', () {
               Navigator.pop(ctx);
@@ -678,6 +681,16 @@ class _FilesTabState extends ConsumerState<_FilesTab> {
     super.initState();
     _path = widget.tab.path ?? '/';
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FilesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextPath = widget.tab.path;
+    if (nextPath != null && nextPath != oldWidget.tab.path) {
+      _path = nextPath;
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -938,58 +951,6 @@ class _BrowserTabState extends ConsumerState<_BrowserTab> {
         const Divider(height: 1),
         Expanded(child: WebViewWidget(controller: _controller!)),
       ],
-    );
-  }
-}
-
-class _GitDiffTab extends ConsumerStatefulWidget {
-  const _GitDiffTab({required this.workspaceId, required this.cwd});
-
-  final String workspaceId;
-  final String cwd;
-
-  @override
-  ConsumerState<_GitDiffTab> createState() => _GitDiffTabState();
-}
-
-class _GitDiffTabState extends ConsumerState<_GitDiffTab> {
-  String? _diff;
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final diff = await ref.read(workspaceManagerProvider).runGitDiff(widget.workspaceId, widget.cwd);
-      if (mounted) {
-        setState(() {
-          _diff = diff.isEmpty ? 'No changes (git diff empty).' : diff;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _diff = e.toString();
-          _loading = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: SelectableText(
-        _diff ?? '',
-        style: AppTypography.mono(size: 12),
-      ),
     );
   }
 }
