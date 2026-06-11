@@ -216,6 +216,35 @@ class SshConnection {
     }
   }
 
+  /// Reads remote file text for preview. Rejects binary/large files.
+  Future<String> readFileText(String path, {int maxBytes = 512 * 1024}) async {
+    final client = await sftp();
+    final attrs = await client.stat(path);
+    final size = attrs.size;
+    if (size != null && size > maxBytes) {
+      throw StateError('File too large to preview (${(size / 1024).round()} KB)');
+    }
+
+    final file = await client.open(path, mode: SftpFileOpenMode.read);
+    try {
+      final bytes = await file.readBytes(length: maxBytes);
+      if (bytes.length >= maxBytes) {
+        throw StateError('File too large to preview');
+      }
+      _ensureTextPreview(bytes);
+      return utf8.decode(bytes, allowMalformed: true);
+    } finally {
+      await file.close();
+    }
+  }
+
+  void _ensureTextPreview(Uint8List bytes) {
+    final sample = bytes.length > 8192 ? bytes.sublist(0, 8192) : bytes;
+    if (sample.contains(0)) {
+      throw StateError('Binary files cannot be previewed');
+    }
+  }
+
   RemoteFileEntry _mapSftpName(SftpName name) {
     final parts = name.longname.split(RegExp(r'\s+'));
     final perm = parts.isNotEmpty ? parts.first : '----------';

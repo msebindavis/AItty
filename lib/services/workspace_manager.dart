@@ -844,6 +844,12 @@ class WorkspaceManager extends ChangeNotifier {
     await w.connection.uploadBytes(data, remotePath);
   }
 
+  Future<String> readFileText(String workspaceId, String remotePath) async {
+    final w = _workspaces[workspaceId];
+    if (w == null || !w.connection.isConnected) throw StateError('Connection lost');
+    return w.connection.readFileText(remotePath);
+  }
+
   Future<SshConnection> _requireConnection(String workspaceId) async {
     final w = _workspaces[workspaceId];
     if (w == null || !w.connection.isConnected) throw StateError('Connection lost');

@@ -1,7 +1,5 @@
 import 'dart:io';
-import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,7 +13,6 @@ import '../../core/constants/spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/obsidian_colors.dart';
 import '../../models/host.dart';
-import '../../models/remote_file_entry.dart';
 import '../../models/session.dart';
 import '../../models/workspace.dart';
 import '../../models/workspace_tab.dart';
@@ -24,12 +21,12 @@ import '../../services/workspace_manager.dart';
 import '../../utils/route_transition.dart';
 import '../../utils/terminal_input.dart';
 import '../../utils/open_workspace.dart';
-import '../../widgets/new_folder_dialog.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/session_name_dialog.dart';
 import '../../widgets/tmux_missing_dialog.dart';
 import 'browser_tab.dart';
 import 'command_editor_sheet.dart';
+import 'files_tab.dart';
 import 'git_manager_tab.dart';
 import 'terminal_theme.dart';
 import 'tmux_scroll_capture.dart';
@@ -358,7 +355,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
 
     final aux = workspace.auxTabs[index - workspace.terminals.length];
     return switch (aux.type) {
-      WorkspaceTabType.files => _FilesTab(workspaceId: widget.workspaceId, tab: aux),
+      WorkspaceTabType.files => FilesTab(workspaceId: widget.workspaceId, tab: aux),
       WorkspaceTabType.browser => BrowserTab(
           key: ValueKey('browser-${aux.id}'),
           workspaceId: widget.workspaceId,
@@ -760,225 +757,6 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
                   icon: const Icon(Icons.copy, size: 18),
                   tooltip: 'Copy',
                   onPressed: _copySelection,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FilesTab extends ConsumerStatefulWidget {
-  const _FilesTab({required this.workspaceId, required this.tab});
-
-  final String workspaceId;
-  final WorkspaceTab tab;
-
-  @override
-  ConsumerState<_FilesTab> createState() => _FilesTabState();
-}
-
-class _FilesTabState extends ConsumerState<_FilesTab> {
-  late String _path;
-  List<RemoteFileEntry>? _entries;
-  String? _error;
-  bool _loading = true;
-  bool _busy = false;
-
-  String _joinPath(String name) => _path.endsWith('/') ? '$_path$name' : '$_path/$name';
-
-  @override
-  void initState() {
-    super.initState();
-    _path = widget.tab.path ?? '/';
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(covariant _FilesTab oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final nextPath = widget.tab.path;
-    if (nextPath != null && nextPath != oldWidget.tab.path) {
-      _path = nextPath;
-      _load();
-    }
-  }
-
-  Future<void> _load() async {
-    if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final raw = await ref.read(workspaceManagerProvider).listDirectory(widget.workspaceId, _path);
-      if (!mounted) return;
-      final children = raw.where((e) => e.name != '.' && e.name != '..').toList()
-        ..sort((a, b) {
-          if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
-          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-        });
-      setState(() {
-        _entries = [
-          const RemoteFileEntry(name: '..', isDirectory: true, permissions: 'drwxr-xr-x'),
-          ...children,
-        ];
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
-    }
-  }
-
-  Future<void> _createFolder() async {
-    if (_busy) return;
-    final name = await NewFolderDialog.show(context);
-    if (name == null || name.isEmpty) return;
-
-    setState(() => _busy = true);
-    try {
-      await ref.read(workspaceManagerProvider).createDirectory(widget.workspaceId, _joinPath(name));
-      if (!mounted) return;
-      await _load();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not create folder: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _uploadFiles() async {
-    if (_busy) return;
-    final result = await FilePicker.platform.pickFiles(allowMultiple: true);
-    if (!mounted) return;
-    await ref.read(workspaceManagerProvider).refreshConnectionHealth();
-    if (result == null || result.files.isEmpty) return;
-
-    setState(() => _busy = true);
-    final manager = ref.read(workspaceManagerProvider);
-    var uploaded = 0;
-    try {
-      for (final file in result.files) {
-        final remotePath = _joinPath(file.name);
-        if (file.path != null) {
-          await manager.uploadFile(widget.workspaceId, file.path!, remotePath);
-        } else if (file.bytes != null) {
-          await manager.uploadBytes(widget.workspaceId, file.bytes!, remotePath);
-        } else {
-          continue;
-        }
-        uploaded++;
-      }
-      if (!mounted) return;
-      if (uploaded > 0) {
-        await _load();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Uploaded $uploaded file${uploaded == 1 ? '' : 's'}')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not read selected files')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  void _open(RemoteFileEntry entry) {
-    if (entry.name == '..') {
-      final parent = _path.replaceAll(RegExp(r'/+$'), '');
-      final idx = parent.lastIndexOf('/');
-      _path = idx <= 0 ? '/' : parent.substring(0, idx);
-      _load();
-      return;
-    }
-    if (!entry.isDirectory) return;
-    _path = _path.endsWith('/') ? '$_path${entry.name}' : '$_path/${entry.name}';
-    _load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: ObsidianColors.background,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Row(
-              children: [
-                const Icon(Icons.folder_outlined, color: ObsidianColors.primary, size: 18),
-                const SizedBox(width: 8),
-                Expanded(child: Text(_path, style: AppTypography.mono(size: 12))),
-                IconButton(
-                  icon: const Icon(Icons.upload_file, size: 20),
-                  tooltip: 'Upload files',
-                  onPressed: _loading || _busy ? null : _uploadFiles,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.create_new_folder_outlined, size: 20),
-                  tooltip: 'New folder',
-                  onPressed: _loading || _busy ? null : _createFolder,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, size: 20),
-                  onPressed: _loading || _busy ? null : _load,
-                ),
-              ],
-            ),
-          ),
-          if (_busy) const LinearProgressIndicator(),
-          const Divider(height: 1),
-          if (_loading) const Expanded(child: Center(child: CircularProgressIndicator())),
-          if (_error != null)
-            Expanded(
-              child: Center(
-                child: Text(_error!, style: AppTypography.mono(size: 12, color: ObsidianColors.error)),
-              ),
-            ),
-          if (!_loading && _error == null)
-            Expanded(
-              child: Material(
-                color: ObsidianColors.surface,
-                child: ListView.separated(
-                  itemCount: _entries!.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, i) {
-                    final e = _entries![i];
-                    return ListTile(
-                      tileColor: ObsidianColors.surface,
-                      leading: Icon(
-                        e.isDirectory ? Icons.folder : Icons.description_outlined,
-                        color: e.isDirectory ? ObsidianColors.primary : ObsidianColors.outline,
-                      ),
-                      title: Text(e.name, style: AppTypography.mono(size: 14)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(e.permissions, style: AppTypography.mono(size: 11, color: ObsidianColors.outline)),
-                          if (e.size != null) ...[
-                            const SizedBox(width: 8),
-                            Text('${e.size}', style: AppTypography.mono(size: 11, color: ObsidianColors.outline)),
-                          ],
-                        ],
-                      ),
-                      onTap: e.isDirectory ? () => _open(e) : null,
-                    );
-                  },
                 ),
               ),
             ),
