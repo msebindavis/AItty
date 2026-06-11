@@ -2,12 +2,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:xterm/xterm.dart';
 
 import '../../core/constants/spacing.dart';
@@ -20,12 +21,14 @@ import '../../models/workspace.dart';
 import '../../models/workspace_tab.dart';
 import '../../services/workspace_repository.dart';
 import '../../services/workspace_manager.dart';
+import '../../utils/route_transition.dart';
 import '../../utils/terminal_input.dart';
 import '../../utils/open_workspace.dart';
 import '../../widgets/new_folder_dialog.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/session_name_dialog.dart';
 import '../../widgets/tmux_missing_dialog.dart';
+import 'browser_tab.dart';
 import 'command_editor_sheet.dart';
 import 'git_manager_tab.dart';
 import 'terminal_theme.dart';
@@ -257,7 +260,14 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
               ),
             Expanded(
               child: _terminalReady
-                  ? _buildTab(workspace, activeIndex)
+                  ? IndexedStack(
+                      index: activeIndex,
+                      sizing: StackFit.expand,
+                      children: List<Widget>.generate(
+                        totalTabs,
+                        (i) => _buildTab(workspace, i, isActive: i == activeIndex),
+                      ),
+                    )
                   : const ColoredBox(
                       color: ObsidianColors.terminalBackground,
                       child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
@@ -334,22 +344,26 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     _exitWorkspace();
   }
 
-  Widget _buildTab(Workspace workspace, int activeIndex) {
-    if (activeIndex < workspace.terminals.length) {
-      final pane = workspace.terminals[activeIndex];
+  Widget _buildTab(Workspace workspace, int index, {required bool isActive}) {
+    if (index < workspace.terminals.length) {
+      final pane = workspace.terminals[index];
       return _SessionTerminalPanel(
         key: ValueKey('terminal-${pane.id}'),
         terminal: pane.terminal,
         controller: pane.controller,
-        tmuxScrollMode: _tmuxScrollMode && pane.useTmux,
+        tmuxScrollMode: isActive && _tmuxScrollMode && pane.useTmux,
         onScrollStep: _sendRaw,
       );
     }
 
-    final aux = workspace.auxTabs[activeIndex - workspace.terminals.length];
+    final aux = workspace.auxTabs[index - workspace.terminals.length];
     return switch (aux.type) {
       WorkspaceTabType.files => _FilesTab(workspaceId: widget.workspaceId, tab: aux),
-      WorkspaceTabType.browser => _BrowserTab(workspaceId: widget.workspaceId, tab: aux),
+      WorkspaceTabType.browser => BrowserTab(
+          key: ValueKey('browser-${aux.id}'),
+          workspaceId: widget.workspaceId,
+          tab: aux,
+        ),
       WorkspaceTabType.gitDiff => GitManagerTab(
           workspaceId: widget.workspaceId,
           cwd: aux.path ?? (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~'),
@@ -378,13 +392,13 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     return w.terminals.length + w.auxTabs.length <= 1;
   }
 
-  void _closeAuxTab(int auxIndex) {
+  Future<void> _closeAuxTab(int auxIndex) async {
     if (workspaceHasOnlyOneTab) return;
-    _workspaceManager.removeAuxTab(widget.workspaceId, auxIndex);
+    await _workspaceManager.removeAuxTab(widget.workspaceId, auxIndex);
   }
 
   Future<void> _showPaneOverflow(TerminalPane pane) async {
-    await showModalBottomSheet<void>(
+    final action = await showModalBottomSheet<_PaneOverflowAction>(
       context: context,
       backgroundColor: ObsidianColors.surfaceContainerHigh,
       builder: (ctx) => SafeArea(
@@ -392,64 +406,71 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (pane.useTmux)
-              _AddTabTile(Icons.drive_file_rename_outline, ObsidianColors.primary, 'Rename session', () async {
-              Navigator.pop(ctx);
-              final renameCtrl = TextEditingController(text: pane.tmuxSessionName);
-              final name = await showDialog<String>(
-                context: context,
-                builder: (dctx) => AlertDialog(
-                  title: const Text('Rename session'),
-                  content: TextField(
-                    controller: renameCtrl,
-                    decoration: const InputDecoration(labelText: 'tmux session name'),
-                    autofocus: true,
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(dctx), child: const Text('Cancel')),
-                    FilledButton(
-                      onPressed: () => Navigator.pop(dctx, renameCtrl.text.trim()),
-                      child: const Text('Save'),
-                    ),
-                  ],
-                ),
-              );
-              if (name == null || name.isEmpty || !mounted) return;
-              try {
-                await _workspaceManager.renamePaneSession(widget.workspaceId, pane.id, name);
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-                }
-              }
+              _AddTabTile(Icons.drive_file_rename_outline, ObsidianColors.primary, 'Rename session', () {
+                Navigator.pop(ctx, _PaneOverflowAction.rename);
               }),
             if (pane.useTmux)
-              _AddTabTile(Icons.stop_circle_outlined, ObsidianColors.error, 'End tmux session', () async {
-                Navigator.pop(ctx);
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (dctx) => AlertDialog(
-                    title: const Text('End tmux session?'),
-                    content: Text('Kill "${pane.tmuxSessionName}" on the remote host?'),
-                    actions: [
-                      TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Cancel')),
-                      FilledButton(onPressed: () => Navigator.pop(dctx, true), child: const Text('End session')),
-                    ],
-                  ),
-                );
-                if (confirmed != true || !mounted) return;
-                await _workspaceManager.endPaneSession(widget.workspaceId, pane.id);
-                if (!mounted) return;
-                if (_workspace == null) _exitWorkspace();
+              _AddTabTile(Icons.stop_circle_outlined, ObsidianColors.error, 'End tmux session', () {
+                Navigator.pop(ctx, _PaneOverflowAction.end);
               }),
             const SizedBox(height: AppSpacing.md),
           ],
         ),
       ),
     );
+    if (!mounted || action == null) return;
+    await waitForRouteTransition();
+
+    switch (action) {
+      case _PaneOverflowAction.rename:
+        final renameCtrl = TextEditingController(text: pane.tmuxSessionName);
+        final name = await showDialog<String>(
+          context: context,
+          builder: (dctx) => AlertDialog(
+            title: const Text('Rename session'),
+            content: TextField(
+              controller: renameCtrl,
+              decoration: const InputDecoration(labelText: 'tmux session name'),
+              autofocus: true,
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dctx), child: const Text('Cancel')),
+              FilledButton(
+                onPressed: () => Navigator.pop(dctx, renameCtrl.text.trim()),
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        );
+        if (name == null || name.isEmpty || !mounted) return;
+        try {
+          await _workspaceManager.renamePaneSession(widget.workspaceId, pane.id, name);
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+          }
+        }
+      case _PaneOverflowAction.end:
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dctx) => AlertDialog(
+            title: const Text('End tmux session?'),
+            content: Text('Kill "${pane.tmuxSessionName}" on the remote host?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(dctx, true), child: const Text('End session')),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
+        await _workspaceManager.endPaneSession(widget.workspaceId, pane.id);
+        if (!mounted) return;
+        if (_workspace == null) _exitWorkspace();
+    }
   }
 
-  void _showAddTabMenu(Workspace workspace) {
-    showModalBottomSheet<void>(
+  Future<void> _showAddTabMenu(Workspace workspace) async {
+    final choice = await showModalBottomSheet<_AddTabAction>(
       context: context,
       backgroundColor: ObsidianColors.surfaceContainerHigh,
       builder: (ctx) => SafeArea(
@@ -457,40 +478,53 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             _AddTabTile(Icons.terminal, ObsidianColors.primary, 'New Terminal', () {
-              Navigator.pop(ctx);
-              _addTerminal(workspace);
+              Navigator.pop(ctx, _AddTabAction.terminal);
             }),
             _AddTabTile(Icons.folder_outlined, ObsidianColors.tertiary, 'New File Browser', () {
-              Navigator.pop(ctx);
-              _addAuxTab(
-                workspace,
-                WorkspaceTabType.files,
-                'Files',
-                path: workspace.activeTerminal?.cwd ??
-                    (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~'),
-              );
+              Navigator.pop(ctx, _AddTabAction.files);
             }),
             _AddTabTile(Icons.language, ObsidianColors.secondary, 'New Browser', () {
-              Navigator.pop(ctx);
-              _addAuxTab(workspace, WorkspaceTabType.browser, 'Browser');
+              Navigator.pop(ctx, _AddTabAction.browser);
             }),
             _AddTabTile(Icons.difference_outlined, ObsidianColors.error, 'Git Manager', () {
-              Navigator.pop(ctx);
-              _addAuxTab(workspace, WorkspaceTabType.gitDiff, 'Git Manager');
+              Navigator.pop(ctx, _AddTabAction.git);
             }),
             _AddTabTile(Icons.drive_file_rename_outline, ObsidianColors.primary, 'Rename workspace', () {
-              Navigator.pop(ctx);
-              _renameWorkspace(workspace);
+              Navigator.pop(ctx, _AddTabAction.rename);
             }),
             _AddTabTile(Icons.bookmark_add_outlined, ObsidianColors.primary, 'Save as template', () {
-              Navigator.pop(ctx);
-              _saveTemplate();
+              Navigator.pop(ctx, _AddTabAction.template);
             }),
             const SizedBox(height: AppSpacing.md),
           ],
         ),
       ),
     );
+    if (!mounted || choice == null) return;
+    if (kDebugMode) debugPrint('[WORKSPACE] add-tab choice: $choice');
+    await waitForRouteTransition();
+    if (!mounted) return;
+
+    switch (choice) {
+      case _AddTabAction.terminal:
+        await _addTerminal(workspace);
+      case _AddTabAction.files:
+        _addAuxTab(
+          workspace,
+          WorkspaceTabType.files,
+          'Files',
+          path: workspace.activeTerminal?.cwd ??
+              (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~'),
+        );
+      case _AddTabAction.browser:
+        await _addBrowserTab(workspace);
+      case _AddTabAction.git:
+        _addAuxTab(workspace, WorkspaceTabType.gitDiff, 'Git Manager');
+      case _AddTabAction.rename:
+        await _renameWorkspace(workspace);
+      case _AddTabAction.template:
+        await _saveTemplate();
+    }
   }
 
   Future<void> _renameWorkspace(Workspace workspace) async {
@@ -593,6 +627,24 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           ),
         );
   }
+
+  Future<void> _addBrowserTab(Workspace workspace) async {
+    final setup = await showBrowserUrlDialog(
+      context,
+      subtitle: 'Preview a dev server running on the remote host.',
+    );
+    if (setup == null || !mounted) return;
+    _workspaceManager.addAuxTab(
+      widget.workspaceId,
+      WorkspaceTab(
+        id: _uuid.v4(),
+        type: WorkspaceTabType.browser,
+        title: ':${setup.remotePort}',
+        remotePort: setup.remotePort,
+        url: setup.displayUrl,
+      ),
+    );
+  }
 }
 
 /// Full terminal input; tap the terminal to type. Command bar is for longer entry.
@@ -619,6 +671,13 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
   void initState() {
     super.initState();
     widget.controller.setSuspendPointerInput(widget.tmuxScrollMode);
+    widget.controller.addListener(_onControllerChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
+    super.dispose();
   }
 
   @override
@@ -627,11 +686,47 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
     if (oldWidget.tmuxScrollMode != widget.tmuxScrollMode) {
       widget.controller.setSuspendPointerInput(widget.tmuxScrollMode);
     }
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onControllerChanged);
+      widget.controller.addListener(_onControllerChanged);
+    }
+  }
+
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _copySelection() async {
+    final selection = widget.controller.selection;
+    if (selection == null) return;
+    final text = widget.terminal.buffer.getText(selection);
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Copied to clipboard'), duration: Duration(seconds: 1)),
+    );
+  }
+
+  void _showCopyMenu(TapUpDetails details) {
+    if (widget.controller.selection == null) return;
+    final position = details.globalPosition;
+    showMenu<void>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: [
+        PopupMenuItem<void>(
+          onTap: _copySelection,
+          child: const Text('Copy'),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final mobile = Platform.isAndroid || Platform.isIOS;
+    final hasSelection = widget.controller.selection != null;
     return RepaintBoundary(
       child: Stack(
         children: [
@@ -643,12 +738,29 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
             autofocus: false,
             deleteDetection: mobile,
             simulateScroll: !widget.tmuxScrollMode,
+            onSecondaryTapDown: (_, _) {},
+            onSecondaryTapUp: (details, _) => _showCopyMenu(details),
           ),
           if (widget.tmuxScrollMode)
             Positioned.fill(
               child: TmuxScrollCapture(
                 pixelsPerLine: tmuxScrollPixelsPerLine(context),
                 onScrollLine: ({required up}) => dispatchTmuxScrollLine(widget.onScrollStep, up: up),
+              ),
+            ),
+          if (hasSelection)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(8),
+                color: ObsidianColors.surfaceContainerHigh,
+                child: IconButton(
+                  icon: const Icon(Icons.copy, size: 18),
+                  tooltip: 'Copy',
+                  onPressed: _copySelection,
+                ),
               ),
             ),
         ],
@@ -872,85 +984,6 @@ class _FilesTabState extends ConsumerState<_FilesTab> {
             ),
         ],
       ),
-    );
-  }
-}
-
-class _BrowserTab extends ConsumerStatefulWidget {
-  const _BrowserTab({required this.workspaceId, required this.tab});
-
-  final String workspaceId;
-  final WorkspaceTab tab;
-
-  @override
-  ConsumerState<_BrowserTab> createState() => _BrowserTabState();
-}
-
-class _BrowserTabState extends ConsumerState<_BrowserTab> {
-  WebViewController? _controller;
-  String _url = '';
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _init();
-  }
-
-  Future<void> _init() async {
-    try {
-      final port = await ref.read(workspaceManagerProvider).ensureBrowserForward(
-            widget.workspaceId,
-            widget.tab.id,
-            widget.tab.remotePort,
-          );
-      _url = widget.tab.url ?? 'http://127.0.0.1:$port/';
-      _controller = WebViewController()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(ObsidianColors.background)
-        ..loadRequest(Uri.parse(_url));
-      if (mounted) setState(() => _loading = false);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          child: Text(_error!, style: AppTypography.mono(size: 12, color: ObsidianColors.error)),
-        ),
-      );
-    }
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
-          child: Row(
-            children: [
-              const Icon(Icons.lock_outline, size: 16, color: ObsidianColors.secondary),
-              const SizedBox(width: 8),
-              Expanded(child: Text(_url, style: AppTypography.mono(size: 12))),
-              IconButton(
-                icon: const Icon(Icons.refresh, size: 20),
-                onPressed: () => _controller?.loadRequest(Uri.parse(_url)),
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 1),
-        Expanded(child: WebViewWidget(controller: _controller!)),
-      ],
     );
   }
 }
@@ -1276,6 +1309,10 @@ class _ImagePreviewStrip extends StatelessWidget {
     );
   }
 }
+
+enum _AddTabAction { terminal, files, browser, git, rename, template }
+
+enum _PaneOverflowAction { rename, end }
 
 class _AddTabTile extends StatelessWidget {
   const _AddTabTile(this.icon, this.color, this.label, this.onTap);

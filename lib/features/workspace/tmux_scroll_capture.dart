@@ -23,7 +23,10 @@ class TmuxScrollCapture extends StatefulWidget {
 
 class _TmuxScrollCaptureState extends State<TmuxScrollCapture> {
   var _accumulatedDelta = 0.0;
-  var _tracking = false;
+  var _scrollCommitted = false;
+  var _totalDelta = Offset.zero;
+
+  static const _scrollSlop = 12.0;
 
   void _scrollLine(bool up) {
     widget.onScrollLine(up: up);
@@ -43,31 +46,46 @@ class _TmuxScrollCaptureState extends State<TmuxScrollCapture> {
     }
   }
 
+  bool _isVerticalScroll(Offset delta) {
+    final absDx = delta.dx.abs();
+    final absDy = delta.dy.abs();
+    if (absDy < _scrollSlop) return false;
+    return absDy > absDx;
+  }
+
+  void _reset() {
+    _scrollCommitted = false;
+    _totalDelta = Offset.zero;
+    _accumulatedDelta = 0;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Listener(
-      behavior: HitTestBehavior.opaque,
+      // Let taps and horizontal drags reach the terminal for text selection.
+      behavior: _scrollCommitted ? HitTestBehavior.opaque : HitTestBehavior.translucent,
       onPointerDown: (_) {
-        _tracking = true;
+        _scrollCommitted = false;
+        _totalDelta = Offset.zero;
+        _accumulatedDelta = 0;
       },
       onPointerMove: (event) {
-        if (!_tracking) return;
+        _totalDelta += event.delta;
+        if (!_scrollCommitted) {
+          if (!_isVerticalScroll(_totalDelta)) return;
+          _scrollCommitted = true;
+        }
         _applyDelta(event.delta.dy);
       },
-      onPointerUp: (_) {
-        _tracking = false;
-        _accumulatedDelta = 0;
-      },
-      onPointerCancel: (_) {
-        _tracking = false;
-        _accumulatedDelta = 0;
-      },
+      onPointerUp: (_) => _reset(),
+      onPointerCancel: (_) => _reset(),
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
+          _scrollCommitted = true;
           _applyDelta(event.scrollDelta.dy);
         }
       },
-      child: const ColoredBox(color: Color(0x00000000)),
+      child: const SizedBox.expand(),
     );
   }
 }

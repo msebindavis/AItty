@@ -270,6 +270,11 @@ class SshConnection {
     return forward;
   }
 
+  Future<void> closeForward(LocalPortForward forward) async {
+    _forwards.remove(forward);
+    await forward.close();
+  }
+
   Future<void> disconnect() async {
     _disconnected = true;
     for (final id in _shells.keys.toList()) {

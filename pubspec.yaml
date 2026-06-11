@@ -41,6 +41,7 @@ dependencies:
   shared_preferences: ^2.5.5
   path_provider: ^2.1.5
   webview_flutter: ^4.13.1
+  webview_flutter_android: ^4.12.2
   file_picker: ^10.3.10
   image_picker: ^1.2.2
 

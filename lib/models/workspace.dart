@@ -2,6 +2,7 @@ import 'package:xterm/xterm.dart';
 
 import 'session.dart';
 import 'workspace_tab.dart';
+import '../services/local_port_forward.dart';
 import '../services/ssh_connection.dart';
 
 enum WorkspaceViewMode { focus, split }
@@ -56,7 +57,7 @@ class Workspace {
   WorkspaceViewMode viewMode;
   SessionState state;
   List<String> pendingImagePaths;
-  final Map<String, int> portForwardsByTabId = {};
+  final Map<String, LocalPortForward> browserForwardsByTabId = {};
 
   SessionState get aggregateState {
     if (terminals.any((t) => t.state == SessionState.awaitingInput)) {

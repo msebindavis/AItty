@@ -1087,11 +1087,35 @@ git status --porcelain
 
   Future<int> ensureBrowserForward(String workspaceId, String tabId, int remotePort) async {
     final w = _workspaces[workspaceId]!;
-    final existing = w.portForwardsByTabId[tabId];
-    if (existing != null) return existing;
+    final existing = w.browserForwardsByTabId[tabId];
+    if (existing != null) return existing.localPort;
     final forward = await w.connection.forwardRemotePort(remotePort);
-    w.portForwardsByTabId[tabId] = forward.localPort;
+    w.browserForwardsByTabId[tabId] = forward;
     return forward.localPort;
+  }
+
+  Future<void> reconfigureBrowserForward(String workspaceId, String tabId, int remotePort) async {
+    final w = _workspaces[workspaceId];
+    if (w == null) return;
+    final existing = w.browserForwardsByTabId.remove(tabId);
+    if (existing != null) {
+      await w.connection.closeForward(existing);
+    }
+    await ensureBrowserForward(workspaceId, tabId, remotePort);
+  }
+
+  void updateAuxTab(
+    String workspaceId,
+    String tabId,
+    WorkspaceTab Function(WorkspaceTab tab) update, {
+    bool notify = true,
+  }) {
+    final w = _workspaces[workspaceId];
+    if (w == null) return;
+    final index = w.auxTabs.indexWhere((t) => t.id == tabId);
+    if (index < 0) return;
+    w.auxTabs[index] = update(w.auxTabs[index]);
+    if (notify) notifyListeners();
   }
 
   void updateWorkspaceUi(
@@ -1121,14 +1145,19 @@ git status --porcelain
     notifyListeners();
   }
 
-  void removeAuxTab(String workspaceId, int auxIndex) {
+  Future<void> removeAuxTab(String workspaceId, int auxIndex) async {
     final w = _workspaces[workspaceId];
     if (w == null) return;
+    final tab = w.auxTabs[auxIndex];
+    final forward = w.browserForwardsByTabId.remove(tab.id);
     w.auxTabs.removeAt(auxIndex);
     if (w.activeTabIndex >= w.terminals.length + w.auxTabs.length) {
       w.activeTabIndex = w.terminals.length + w.auxTabs.length - 1;
     }
     notifyListeners();
+    if (forward != null) {
+      await w.connection.closeForward(forward);
+    }
   }
 
   void addPendingImage(String workspaceId, String path) {
