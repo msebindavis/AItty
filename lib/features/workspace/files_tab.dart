@@ -51,6 +51,19 @@ class _FilesTabState extends ConsumerState<FilesTab> {
 
   String _joinPath(String name) => _path.endsWith('/') ? '$_path$name' : '$_path/$name';
 
+  void _openEntry(RemoteFileEntry entry) {
+    if (entry.name == '..') {
+      _open(entry);
+      return;
+    }
+    if (entry.isDirectory) {
+      _open(entry);
+      return;
+    }
+    setState(() => _ideView = true);
+    _openFile(_joinPath(entry.name));
+  }
+
   String get _pathBasename {
     final trimmed = _path.replaceAll(RegExp(r'/+$'), '');
     if (trimmed.isEmpty) return '/';
@@ -481,7 +494,7 @@ class _FilesTabState extends ConsumerState<FilesTab> {
                 ],
               ],
             ),
-            onTap: e.isDirectory ? () => _open(e) : null,
+            onTap: () => _openEntry(e),
           );
         },
       ),
@@ -556,10 +569,12 @@ class _FileTreePaneState extends ConsumerState<_FileTreePane> {
   final Set<String> _loadingDirs = {};
   String? _error;
   final ScrollController _scrollController = ScrollController();
+  final ScrollController _horizontalScrollController = ScrollController();
 
   @override
   void dispose() {
     _scrollController.dispose();
+    _horizontalScrollController.dispose();
     super.dispose();
   }
 
@@ -689,15 +704,13 @@ class _FileTreePaneState extends ConsumerState<_FileTreePane> {
                 color: entry.isDirectory ? ObsidianColors.primary : ObsidianColors.outline,
               ),
               const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  entry.name,
-                  style: AppTypography.mono(
-                    size: 12,
-                    color: isSelected ? ObsidianColors.primary : ObsidianColors.onSurface,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+              Text(
+                entry.name,
+                style: AppTypography.mono(
+                  size: 12,
+                  color: isSelected ? ObsidianColors.primary : ObsidianColors.onSurface,
                 ),
+                softWrap: false,
               ),
             ],
           ),
@@ -746,10 +759,32 @@ class _FileTreePaneState extends ConsumerState<_FileTreePane> {
             child: Text(_error!, style: AppTypography.mono(size: 11, color: ObsidianColors.error)),
           ),
         Expanded(
-          child: ListView(
-            controller: _scrollController,
-            padding: const EdgeInsets.only(bottom: 12),
-            children: _buildNodes(widget.rootPath, 0),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return Scrollbar(
+                controller: _scrollController,
+                child: Scrollbar(
+                  controller: _horizontalScrollController,
+                  notificationPredicate: (notification) => notification.depth == 1,
+                  child: SingleChildScrollView(
+                    controller: _horizontalScrollController,
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                      child: SingleChildScrollView(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: _buildNodes(widget.rootPath, 0),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ],
@@ -924,7 +959,7 @@ class _EditorTabChip extends StatelessWidget {
               ),
               InkWell(
                 onTap: onClose,
-                borderRadius: BorderRadius.circular(12),
+                customBorder: const CircleBorder(),
                 child: Padding(
                   padding: const EdgeInsets.all(4),
                   child: Icon(

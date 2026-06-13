@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -16,9 +18,12 @@ import '../../models/host.dart';
 import '../../models/session.dart';
 import '../../models/workspace.dart';
 import '../../models/workspace_tab.dart';
+import '../../services/snippet_repository.dart';
 import '../../services/workspace_repository.dart';
 import '../../services/workspace_manager.dart';
+import '../../utils/command_history.dart';
 import '../../utils/route_transition.dart';
+import '../../utils/speech_dictation.dart';
 import '../../utils/terminal_input.dart';
 import '../../utils/open_workspace.dart';
 import '../../widgets/section_header.dart';
@@ -28,8 +33,12 @@ import 'browser_tab.dart';
 import 'command_editor_sheet.dart';
 import 'files_tab.dart';
 import 'git_manager_tab.dart';
+import 'terminal_keyboard/extended_keyboard_sheet.dart';
+import 'terminal_keyboard/terminal_gesture_layer.dart';
+import 'terminal_keyboard/terminal_key_catalog.dart';
+import 'terminal_keyboard/terminal_keyboard_panel.dart';
 import 'terminal_theme.dart';
-import 'tmux_scroll_capture.dart';
+import 'tmux_side_scroll_rail.dart';
 
 class WorkspaceScreen extends ConsumerStatefulWidget {
   const WorkspaceScreen({super.key, required this.workspaceId});
@@ -45,10 +54,18 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   final _uuid = const Uuid();
   bool _ctrl = false;
   bool _alt = false;
-  bool _tmuxScrollMode = false;
   String? _chromeSnapshot;
   bool _terminalReady = false;
   bool _commandBarReady = false;
+  final _commandFocusNode = FocusNode();
+  final _commandHistoryByPaneId = <String, CommandHistory>{};
+  String? _trackedInputPaneId;
+  final _speechDictation = SpeechDictation();
+  String _dictationPrefix = '';
+  bool _dictationListening = false;
+  bool _inputHidden = false;
+  double _terminalFontScale = 1;
+  List<TerminalSnippet> _snippets = const [];
   late final WorkspaceManager _workspaceManager;
 
   @override
@@ -56,7 +73,63 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     super.initState();
     _workspaceManager = ref.read(workspaceManagerProvider);
     _workspaceManager.addListener(_onWorkspaceManagerChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleContentMount());
+    _commandFocusNode.onKeyEvent = _handleCommandFocusKey;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncCommandInputPane();
+      _scheduleContentMount();
+    });
+    _loadSnippets();
+  }
+
+  @override
+  void didUpdateWidget(covariant WorkspaceScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.workspaceId == widget.workspaceId) return;
+    _commandHistoryByPaneId.clear();
+    _trackedInputPaneId = null;
+    _commandController.clear();
+    _dictationPrefix = '';
+    _dictationListening = false;
+    _syncCommandInputPane();
+  }
+
+  CommandHistory get _commandHistory {
+    final paneId = _activePane?.id;
+    if (paneId == null) return CommandHistory();
+    return _commandHistoryByPaneId.putIfAbsent(paneId, CommandHistory.new);
+  }
+
+  /// Clears draft input when the active tmux pane changes (tab switch, attach, resume).
+  void _syncCommandInputPane() {
+    final paneId = _activePane?.id;
+    if (paneId == _trackedInputPaneId) return;
+    _trackedInputPaneId = paneId;
+    _commandController.clear();
+    _commandHistory.resetBrowse();
+    _dictationPrefix = '';
+    if (_dictationListening) {
+      unawaited(_speechDictation.stop());
+      _dictationListening = false;
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadSnippets() async {
+    final snippets = await ref.read(snippetRepositoryProvider).loadAll();
+    if (mounted) setState(() => _snippets = snippets);
+  }
+
+  KeyEventResult _handleCommandFocusKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      _navigateCommandHistoryOlder();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      _navigateCommandHistoryNewer();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   void _scheduleContentMount() {
@@ -78,46 +151,95 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     final next = _snapshotChrome(workspace);
     if (next == _chromeSnapshot) return;
     _chromeSnapshot = next;
-    if (mounted) setState(() {});
+    _syncCommandInputPane();
+    _scheduleChromeRebuild();
+  }
+
+  void _scheduleChromeRebuild() {
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle || phase == SchedulerPhase.postFrameCallbacks) {
+      setState(() {});
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _syncChromeFromWorkspace() {
+    _chromeSnapshot = _snapshotChrome(_workspace);
+    _scheduleChromeRebuild();
   }
 
   String _snapshotChrome(Workspace? workspace) {
     if (workspace == null) return 'ended';
     final terminalIds = workspace.terminals.map((p) => p.id).join(',');
     final terminalNames = workspace.terminals.map((p) => p.tmuxSessionName).join(',');
-    final auxMeta = workspace.auxTabs.map((t) => '${t.id}:${t.path ?? ''}').join(',');
-    return '${workspace.aggregateState.index}|${workspace.state.index}|$terminalIds|$terminalNames|$auxMeta|'
-        '${workspace.activeTabIndex}|${workspace.pendingImagePaths.length}';
+    final auxMeta = workspace.auxTabs
+        .map((t) => '${t.id}:${t.type.name}:${t.title}:${t.path ?? ''}:${t.remotePort}')
+        .join(',');
+    return '${workspace.aggregateState.index}|${workspace.state.index}|$terminalIds|$terminalNames|'
+        '${workspace.auxTabs.length}|$auxMeta|${workspace.activeTabIndex}|${workspace.pendingImagePaths.length}';
   }
 
   @override
   void dispose() {
-    if (_tmuxScrollMode) {
-      final pane = _workspaceManager.getWorkspace(widget.workspaceId)?.activeTerminal;
-      pane?.controller.setSuspendPointerInput(false);
-      _tmuxScrollMode = false;
-    }
     _workspaceManager.removeListener(_onWorkspaceManagerChanged);
+    _speechDictation.dispose();
     _commandController.dispose();
+    _commandFocusNode.dispose();
     super.dispose();
   }
 
-  void _toggleTmuxScrollMode() {
-    FocusManager.instance.primaryFocus?.unfocus();
-    setState(() => _tmuxScrollMode = !_tmuxScrollMode);
-    _activePane?.controller.setSuspendPointerInput(_tmuxScrollMode);
-    _sendRaw(_tmuxScrollMode ? TerminalInput.tmuxCopyModeEnter() : TerminalInput.tmuxCopyModeExit());
+  bool get _commandBarFocused => _commandFocusNode.hasFocus;
+
+  bool get _terminalShortcutsEnabled {
+    final workspace = _workspace;
+    if (workspace == null || !workspace.isTerminalTabActive) return false;
+    return !_commandBarFocused;
   }
 
-  void _deactivateTmuxScrollMode({bool sendExit = true}) {
-    if (!_tmuxScrollMode) return;
-    if (sendExit) _sendRaw(TerminalInput.tmuxCopyModeExit());
-    _activePane?.controller.setSuspendPointerInput(false);
-    if (mounted) setState(() => _tmuxScrollMode = false);
-  }
-
-  void _sendModifierArrow(Uint8List bytes) {
+  void _sendTerminalBytes(Uint8List bytes, {bool clearModifiers = true}) {
     _sendRaw(bytes);
+    if (clearModifiers && (_ctrl || _alt) && mounted) {
+      setState(() {
+        _ctrl = false;
+        _alt = false;
+      });
+    }
+  }
+
+  void _sendCtrlChar(String char) => _sendTerminalBytes(TerminalInput.ctrl(char));
+
+  void _sendAltChar(String char) => _sendTerminalBytes(TerminalInput.alt(char));
+
+  void _sendArrow(TerminalArrowDirection direction) {
+    if (_ctrl && _alt) {
+      _sendTerminalBytes(TerminalInput.modifiedArrow(direction: direction, modifier: 7));
+      return;
+    }
+    if (_ctrl) {
+      _sendTerminalBytes(TerminalInput.ctrlArrow(direction));
+      return;
+    }
+    if (_alt) {
+      _sendTerminalBytes(TerminalInput.altArrow(direction));
+      return;
+    }
+    _sendTerminalBytes(TerminalInput.arrow(direction), clearModifiers: false);
+  }
+
+  void _sendStickyChar(String char) {
+    if (_ctrl) {
+      _sendCtrlChar(char);
+      return;
+    }
+    if (_alt) {
+      _sendAltChar(char);
+      return;
+    }
+    _sendTerminalBytes(TerminalInput.text(char));
   }
 
   void _exitWorkspace() {
@@ -146,7 +268,101 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     if (command.trim().isEmpty) return;
     final paneId = _activePane?.id;
     _workspaceManager.sendCommand(widget.workspaceId, command, paneId: paneId);
+    _commandHistory.add(command);
     _commandController.clear();
+    _commandHistory.resetBrowse();
+    if (mounted) setState(() {});
+  }
+
+  void _setCommandText(String text) {
+    _commandController.text = text;
+    _commandController.selection = TextSelection.collapsed(offset: text.length);
+  }
+
+  void _selectHistoryCommand(String text) {
+    _commandHistory.resetBrowse();
+    _setCommandText(text);
+  }
+
+  void _navigateCommandHistoryOlder() {
+    final entry = _commandHistory.older(_commandController.text);
+    if (entry != null) _setCommandText(entry);
+  }
+
+  void _navigateCommandHistoryNewer() {
+    final entry = _commandHistory.newer();
+    if (entry != null) _setCommandText(entry);
+  }
+
+  Future<void> _toggleVoiceDictation() async {
+    if (_dictationListening) {
+      await _speechDictation.stop();
+      if (mounted) setState(() => _dictationListening = false);
+      return;
+    }
+
+    _dictationPrefix = _commandController.text;
+    if (_dictationPrefix.isNotEmpty) _dictationPrefix = '$_dictationPrefix ';
+
+    await _speechDictation.toggle(
+      onResult: (words) {
+        if (!mounted) return;
+        _setCommandText('$_dictationPrefix$words');
+        if (!_speechDictation.listening && _dictationListening) {
+          setState(() => _dictationListening = false);
+        }
+      },
+      onError: (message) {
+        if (!mounted) return;
+        setState(() => _dictationListening = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      },
+    );
+
+    if (!mounted) return;
+    setState(() => _dictationListening = _speechDictation.listening);
+  }
+
+  void _handleTerminalKeyAction(TerminalKeyAction action) {
+    switch (action) {
+      case TerminalKeyAction.openExtended:
+        _openExtendedKeyboard();
+        return;
+      case TerminalKeyAction.hideKeyboard:
+        FocusManager.instance.primaryFocus?.unfocus();
+        setState(() => _inputHidden = !_inputHidden);
+        return;
+      case TerminalKeyAction.toggleCtrl:
+        setState(() => _ctrl = !_ctrl);
+        return;
+      case TerminalKeyAction.toggleAlt:
+        setState(() => _alt = !_alt);
+        return;
+      default:
+        break;
+    }
+    final bytes = TerminalKeyCatalog.bytesFor(action);
+    if (bytes != null) _sendTerminalBytes(bytes);
+  }
+
+  Future<void> _openExtendedKeyboard() async {
+    await ExtendedKeyboardSheet.show(
+      context,
+      history: _commandHistory.recent(limit: 50),
+      snippets: _snippets,
+      onKeyAction: _handleTerminalKeyAction,
+      onRunCommand: _sendCommand,
+      onPasteCommand: _selectHistoryCommand,
+      onAddSnippet: (name, script) async {
+        await ref.read(snippetRepositoryProvider).add(name: name, script: script);
+        await _loadSnippets();
+      },
+      onDeleteSnippet: (id) async {
+        await ref.read(snippetRepositoryProvider).delete(id);
+        await _loadSnippets();
+      },
+    );
+    if (mounted) await _loadSnippets();
   }
 
   Future<void> _pickImage(Workspace workspace) async {
@@ -187,10 +403,22 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
 
     final activeIndex = workspace.activeTabIndex.clamp(0, totalTabs - 1);
     final isTerminalActive = activeIndex < workspace.terminals.length;
-    final activePane = isTerminalActive ? workspace.terminals[activeIndex] : null;
-    final showTmuxScroll = activePane?.useTmux ?? false;
 
-    return Scaffold(
+    return Shortcuts(
+      shortcuts: _workspaceTerminalShortcuts,
+      child: Actions(
+        actions: {
+          _TerminalBytesIntent: CallbackAction<_TerminalBytesIntent>(
+            onInvoke: (intent) {
+              if (!_terminalShortcutsEnabled) return null;
+              _sendRaw(intent.bytes);
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          autofocus: false,
+          child: Scaffold(
       backgroundColor: ObsidianColors.terminalBackground,
       body: SafeArea(
         child: Column(
@@ -270,54 +498,34 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                       child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
                     ),
             ),
-            if (_tmuxScrollMode && showTmuxScroll)
-              Material(
-                color: ObsidianColors.primary.withValues(alpha: 0.12),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 6),
-                  child: Row(
-                    children: [
-                      Icon(Icons.swipe_vertical, size: 16, color: ObsidianColors.primary),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: Text(
-                          'Scroll mode — drag the terminal to move through output',
-                          style: AppTypography.inter(size: 12, color: ObsidianColors.primary),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
             if (_commandBarReady && isTerminalActive) ...[
-              _CommandInputBar(
-                controller: _commandController,
-                onSend: () => _sendCommand(_commandController.text),
-                onExpand: () async {
-                  final text = await CommandEditorSheet.show(context, initial: _commandController.text);
-                  if (text != null && text.isNotEmpty) _sendCommand(text);
-                },
-                onImage: () => _pickImage(workspace),
-                onMic: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Voice input: wire speech_to_text to enable.')),
-                  );
-                },
-              ),
-              _ModifierBar(
+              if (!_inputHidden)
+                _CommandInputBar(
+                  controller: _commandController,
+                  focusNode: _commandFocusNode,
+                  listening: _dictationListening,
+                  recentCommands: _commandHistory.recent(),
+                  onSend: () => _sendCommand(_commandController.text),
+                  onExpand: () async {
+                    final text = await CommandEditorSheet.show(context, initial: _commandController.text);
+                    if (text != null && text.isNotEmpty) _sendCommand(text);
+                  },
+                  onImage: () => _pickImage(workspace),
+                  onMic: _toggleVoiceDictation,
+                  onSelectHistory: _selectHistoryCommand,
+                ),
+              TerminalKeyboardPanel(
                 ctrlActive: _ctrl,
                 altActive: _alt,
-                tmuxScrollActive: _tmuxScrollMode,
-                showTmuxScroll: showTmuxScroll,
-                onEsc: () => _sendRaw(TerminalInput.esc()),
-                onCtrl: () => setState(() => _ctrl = !_ctrl),
-                onAlt: () => setState(() => _alt = !_alt),
-                onTab: () => _sendRaw(TerminalInput.tab()),
-                onTmuxScroll: _toggleTmuxScrollMode,
-                onArrow: _sendModifierArrow,
+                onKeyAction: _handleTerminalKeyAction,
+                onChar: _sendStickyChar,
+                onArrow: _sendArrow,
               ),
             ],
           ],
+        ),
+      ),
+    ),
         ),
       ),
     );
@@ -348,20 +556,29 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         key: ValueKey('terminal-${pane.id}'),
         terminal: pane.terminal,
         controller: pane.controller,
-        tmuxScrollMode: isActive && _tmuxScrollMode && pane.useTmux,
+        useTmux: pane.useTmux,
+        fontScale: _terminalFontScale,
         onScrollStep: _sendRaw,
+        onGestureArrow: _sendArrow,
+        onGestureTab: () => _sendTerminalBytes(TerminalInput.tab()),
+        onFontScaleChanged: (scale) => setState(() => _terminalFontScale = scale),
       );
     }
 
     final aux = workspace.auxTabs[index - workspace.terminals.length];
     return switch (aux.type) {
-      WorkspaceTabType.files => FilesTab(workspaceId: widget.workspaceId, tab: aux),
+      WorkspaceTabType.files => FilesTab(
+          key: ValueKey('files-${aux.id}'),
+          workspaceId: widget.workspaceId,
+          tab: aux,
+        ),
       WorkspaceTabType.browser => BrowserTab(
           key: ValueKey('browser-${aux.id}'),
           workspaceId: widget.workspaceId,
           tab: aux,
         ),
       WorkspaceTabType.gitDiff => GitManagerTab(
+          key: ValueKey('git-${aux.id}'),
           workspaceId: widget.workspaceId,
           cwd: aux.path ?? (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~'),
           onOpenTerminal: workspace.terminals.isNotEmpty ? () => _setActiveTab(0) : null,
@@ -371,13 +588,12 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   }
 
   void _setActiveTab(int index) {
-    _deactivateTmuxScrollMode();
     _workspaceManager.updateWorkspaceUi(widget.workspaceId, activeTabIndex: index);
+    _syncCommandInputPane();
   }
 
   Future<void> _closeTerminalTab(TerminalPane pane) async {
     if (workspaceHasOnlyOneTab) return;
-    _deactivateTmuxScrollMode();
     await _workspaceManager.detachPane(widget.workspaceId, pane.id);
     if (!mounted) return;
     if (_workspace == null) _exitWorkspace();
@@ -611,6 +827,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           tmuxSessionName: choice.sessionName,
           useTmux: useTmux,
         );
+    if (mounted) _syncChromeFromWorkspace();
   }
 
   void _addAuxTab(Workspace workspace, WorkspaceTabType type, String title, {String? path}) {
@@ -623,6 +840,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
             path: path ?? (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : '~'),
           ),
         );
+    _syncChromeFromWorkspace();
   }
 
   Future<void> _addBrowserTab(Workspace workspace) async {
@@ -641,6 +859,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         url: setup.displayUrl,
       ),
     );
+    if (mounted) _syncChromeFromWorkspace();
   }
 }
 
@@ -650,29 +869,43 @@ class _SessionTerminalPanel extends StatefulWidget {
     super.key,
     required this.terminal,
     required this.controller,
-    required this.tmuxScrollMode,
+    required this.useTmux,
+    required this.fontScale,
     required this.onScrollStep,
+    required this.onGestureArrow,
+    required this.onGestureTab,
+    required this.onFontScaleChanged,
   });
 
   final Terminal terminal;
   final TerminalController controller;
-  final bool tmuxScrollMode;
+  final bool useTmux;
+  final double fontScale;
   final void Function(Uint8List bytes) onScrollStep;
+  final ValueChanged<TerminalArrowDirection> onGestureArrow;
+  final VoidCallback onGestureTab;
+  final ValueChanged<double> onFontScaleChanged;
 
   @override
   State<_SessionTerminalPanel> createState() => _SessionTerminalPanelState();
 }
 
 class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
+  var _tmuxCopyMode = false;
+  var _tmuxScrollReady = false;
+  Future<void>? _prepareScrollFuture;
+
   @override
   void initState() {
     super.initState();
-    widget.controller.setSuspendPointerInput(widget.tmuxScrollMode);
     widget.controller.addListener(_onControllerChanged);
   }
 
   @override
   void dispose() {
+    if (_tmuxCopyMode) {
+      widget.onScrollStep(TerminalInput.tmuxCopyModeExit());
+    }
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
@@ -680,17 +913,74 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
   @override
   void didUpdateWidget(covariant _SessionTerminalPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.tmuxScrollMode != widget.tmuxScrollMode) {
-      widget.controller.setSuspendPointerInput(widget.tmuxScrollMode);
-    }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_onControllerChanged);
       widget.controller.addListener(_onControllerChanged);
     }
+    if (oldWidget.terminal != widget.terminal) {
+      if (_tmuxCopyMode) {
+        oldWidget.onScrollStep(TerminalInput.tmuxCopyModeExit());
+      }
+      _tmuxCopyMode = false;
+      _tmuxScrollReady = false;
+      _prepareScrollFuture = null;
+    }
+  }
+
+  Future<void> _prepareTmuxScroll() async {
+    if (!widget.useTmux || _tmuxScrollReady) return;
+    if (_prepareScrollFuture != null) {
+      await _prepareScrollFuture;
+      return;
+    }
+    _prepareScrollFuture = _enterTmuxCopyAtTop();
+    await _prepareScrollFuture;
+    _prepareScrollFuture = null;
+  }
+
+  Future<void> _enterTmuxCopyAtTop() async {
+    if (!_tmuxCopyMode) {
+      _tmuxCopyMode = true;
+      widget.onScrollStep(TerminalInput.tmuxPrefix());
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      if (!mounted) return;
+      widget.onScrollStep(TerminalInput.tmuxCopyModeOpen());
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      if (mounted) setState(() {});
+    }
+    if (!mounted) return;
+    widget.onScrollStep(TerminalInput.tmuxCopyModeTopVi());
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
+    widget.onScrollStep(TerminalInput.tmuxCopyModeTopEmacs());
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    if (!mounted) return;
+    _tmuxScrollReady = true;
+  }
+
+  void _exitTmuxCopyMode() {
+    if (!_tmuxCopyMode) return;
+    _tmuxCopyMode = false;
+    _tmuxScrollReady = false;
+    _prepareScrollFuture = null;
+    widget.onScrollStep(TerminalInput.tmuxCopyModeExit());
+    setState(() {});
+  }
+
+  void _scrollTmux({required bool up, TmuxScrollStep step = TmuxScrollStep.line}) {
+    dispatchTmuxScroll(widget.onScrollStep, up: up, step: step);
   }
 
   void _onControllerChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle || phase == SchedulerPhase.postFrameCallbacks) {
+      setState(() {});
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _copySelection() async {
@@ -724,25 +1014,46 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
   Widget build(BuildContext context) {
     final mobile = Platform.isAndroid || Platform.isIOS;
     final hasSelection = widget.controller.selection != null;
+    final showScrollRail = widget.useTmux;
+    final terminalStyle = TerminalStyle(
+      fontFamily: obsidianTerminalTextStyle.fontFamily,
+      fontSize: (obsidianTerminalTextStyle.fontSize) * widget.fontScale,
+    );
+    final terminalBody = TerminalView(
+      widget.terminal,
+      controller: widget.controller,
+      theme: obsidianTerminalTheme,
+      textStyle: terminalStyle,
+      autofocus: false,
+      deleteDetection: mobile,
+      simulateScroll: !widget.useTmux,
+      onSecondaryTapDown: (_, _) {},
+      onSecondaryTapUp: (details, _) => _showCopyMenu(details),
+    );
     return RepaintBoundary(
       child: Stack(
         children: [
-          TerminalView(
-            widget.terminal,
-            controller: widget.controller,
-            theme: obsidianTerminalTheme,
-            textStyle: obsidianTerminalTextStyle,
-            autofocus: false,
-            deleteDetection: mobile,
-            simulateScroll: !widget.tmuxScrollMode,
-            onSecondaryTapDown: (_, _) {},
-            onSecondaryTapUp: (details, _) => _showCopyMenu(details),
+          TerminalGestureLayer(
+            enabled: true,
+            fontScale: widget.fontScale,
+            onArrow: widget.onGestureArrow,
+            onTab: widget.onGestureTab,
+            onFontScaleChanged: widget.onFontScaleChanged,
+            child: terminalBody,
           ),
-          if (widget.tmuxScrollMode)
-            Positioned.fill(
-              child: TmuxScrollCapture(
-                pixelsPerLine: tmuxScrollPixelsPerLine(context),
-                onScrollLine: ({required up}) => dispatchTmuxScrollLine(widget.onScrollStep, up: up),
+          if (showScrollRail)
+            Positioned(
+              right: 6,
+              top: 48,
+              bottom: 8,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TmuxSideScrollRail(
+                  copyModeActive: _tmuxCopyMode,
+                  onPrepareScroll: _prepareTmuxScroll,
+                  onExitCopyMode: _exitTmuxCopyMode,
+                  onScroll: _scrollTmux,
+                ),
               ),
             ),
           if (hasSelection)
@@ -891,51 +1202,103 @@ class _WorkspaceTabBar extends StatelessWidget {
 class _CommandInputBar extends StatelessWidget {
   const _CommandInputBar({
     required this.controller,
+    required this.focusNode,
+    required this.listening,
+    required this.recentCommands,
     required this.onSend,
     required this.onExpand,
     required this.onImage,
     required this.onMic,
+    required this.onSelectHistory,
   });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool listening;
+  final List<String> recentCommands;
   final VoidCallback onSend;
   final VoidCallback onExpand;
   final VoidCallback onImage;
   final VoidCallback onMic;
+  final ValueChanged<String> onSelectHistory;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
-      color: ObsidianColors.surfaceContainerLow,
+      decoration: const BoxDecoration(
+        color: ObsidianColors.surfaceContainerLow,
+        border: Border(top: BorderSide(color: ObsidianColors.outlineVariant, width: 0.5)),
+      ),
       child: Row(
         children: [
-          IconButton(icon: const Icon(Icons.image_outlined, size: 20), onPressed: onImage),
-          IconButton(icon: const Icon(Icons.mic_none, size: 20), onPressed: onMic),
+          IconButton(
+            icon: const Icon(Icons.image_outlined, size: 20),
+            color: ObsidianColors.onSurfaceVariant,
+            tooltip: 'Attach image',
+            onPressed: onImage,
+          ),
+          IconButton(
+            icon: Icon(listening ? Icons.mic : Icons.mic_none, size: 20),
+            color: listening ? ObsidianColors.error : ObsidianColors.onSurfaceVariant,
+            tooltip: listening ? 'Stop dictation' : 'Dictate command',
+            onPressed: onMic,
+          ),
+          if (recentCommands.isNotEmpty)
+            PopupMenuButton<String>(
+              tooltip: 'Command history',
+              icon: const Icon(Icons.history, size: 20, color: ObsidianColors.onSurfaceVariant),
+              onSelected: onSelectHistory,
+              itemBuilder: (context) => [
+                for (final command in recentCommands)
+                  PopupMenuItem(
+                    value: command,
+                    child: Text(
+                      command,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTypography.mono(size: 12),
+                    ),
+                  ),
+              ],
+            ),
           Expanded(
             child: TextField(
+              focusNode: focusNode,
               controller: controller,
               autofocus: false,
-              style: AppTypography.inter(size: 14),
+              style: AppTypography.inter(size: 14, color: ObsidianColors.onSurface),
               onSubmitted: (_) => onSend(),
               decoration: InputDecoration(
-                hintText: 'Use me for long commands or prompts',
+                hintText: listening ? 'Listening…' : 'Type a command…',
+                hintStyle: AppTypography.inter(size: 14, color: ObsidianColors.onSurfaceVariant.withValues(alpha: 0.55)),
                 filled: true,
                 fillColor: ObsidianColors.surfaceContainerHighest,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
                   borderSide: BorderSide.none,
                 ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+                  borderSide: const BorderSide(color: ObsidianColors.primary, width: 1),
+                ),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               ),
             ),
           ),
-          IconButton(icon: const Icon(Icons.open_in_full, size: 20), onPressed: onExpand),
+          IconButton(
+            icon: const Icon(Icons.open_in_full, size: 20),
+            color: ObsidianColors.onSurfaceVariant,
+            tooltip: 'Expand editor',
+            onPressed: onExpand,
+          ),
           IconButton(
             icon: const Icon(Icons.send, size: 20),
+            tooltip: 'Send command',
             style: IconButton.styleFrom(
               backgroundColor: ObsidianColors.primary,
               foregroundColor: ObsidianColors.onPrimary,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppSpacing.radiusXl)),
             ),
             onPressed: onSend,
           ),
@@ -945,108 +1308,50 @@ class _CommandInputBar extends StatelessWidget {
   }
 }
 
-class _ModifierBar extends StatelessWidget {
-  const _ModifierBar({
-    required this.ctrlActive,
-    required this.altActive,
-    required this.tmuxScrollActive,
-    required this.showTmuxScroll,
-    required this.onEsc,
-    required this.onCtrl,
-    required this.onAlt,
-    required this.onTab,
-    required this.onTmuxScroll,
-    required this.onArrow,
-  });
-
-  final bool ctrlActive;
-  final bool altActive;
-  final bool tmuxScrollActive;
-  final bool showTmuxScroll;
-  final VoidCallback onEsc;
-  final VoidCallback onCtrl;
-  final VoidCallback onAlt;
-  final VoidCallback onTab;
-  final VoidCallback onTmuxScroll;
-  final void Function(Uint8List) onArrow;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: ObsidianColors.surfaceContainerLowest,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
-      child: Row(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _ModKey('ESC', onTap: onEsc),
-                  _ModKey('CTRL', active: ctrlActive, onTap: onCtrl),
-                  _ModKey('ALT', active: altActive, onTap: onAlt),
-                  _ModKey('TAB', onTap: onTab),
-                  if (showTmuxScroll) _ModKey('SCR', active: tmuxScrollActive, onTap: onTmuxScroll),
-                ],
-              ),
-            ),
-          ),
-          IconButton(
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            icon: const Icon(Icons.keyboard_arrow_left, size: 20),
-            onPressed: () => onArrow(TerminalInput.arrowLeft()),
-          ),
-          IconButton(
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            icon: const Icon(Icons.keyboard_arrow_up, size: 20),
-            onPressed: () => onArrow(TerminalInput.arrowUp()),
-          ),
-          IconButton(
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            icon: const Icon(Icons.keyboard_arrow_down, size: 20),
-            onPressed: () => onArrow(TerminalInput.arrowDown()),
-          ),
-          IconButton(
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            icon: const Icon(Icons.keyboard_arrow_right, size: 20),
-            onPressed: () => onArrow(TerminalInput.arrowRight()),
-          ),
-        ],
-      ),
-    );
-  }
+class _TerminalBytesIntent extends Intent {
+  const _TerminalBytesIntent(this.bytes);
+  final Uint8List bytes;
 }
 
-class _ModKey extends StatelessWidget {
-  const _ModKey(this.label, {required this.onTap, this.active = false});
-
-  final String label;
-  final VoidCallback onTap;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: Material(
-        color: active ? ObsidianColors.primary.withValues(alpha: 0.25) : ObsidianColors.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Text(label, style: AppTypography.mono(size: 12, color: active ? ObsidianColors.primary : null)),
-          ),
-        ),
-      ),
-    );
-  }
-}
+final Map<ShortcutActivator, Intent> _workspaceTerminalShortcuts = {
+  SingleActivator(LogicalKeyboardKey.keyC, control: true): _TerminalBytesIntent(TerminalInput.ctrl('c')),
+  SingleActivator(LogicalKeyboardKey.keyZ, control: true): _TerminalBytesIntent(TerminalInput.ctrl('z')),
+  SingleActivator(LogicalKeyboardKey.keyD, control: true): _TerminalBytesIntent(TerminalInput.ctrl('d')),
+  SingleActivator(LogicalKeyboardKey.keyL, control: true): _TerminalBytesIntent(TerminalInput.ctrl('l')),
+  SingleActivator(LogicalKeyboardKey.keyA, control: true): _TerminalBytesIntent(TerminalInput.ctrl('a')),
+  SingleActivator(LogicalKeyboardKey.keyE, control: true): _TerminalBytesIntent(TerminalInput.ctrl('e')),
+  SingleActivator(LogicalKeyboardKey.keyU, control: true): _TerminalBytesIntent(TerminalInput.ctrl('u')),
+  SingleActivator(LogicalKeyboardKey.keyW, control: true): _TerminalBytesIntent(TerminalInput.ctrl('w')),
+  SingleActivator(LogicalKeyboardKey.keyR, control: true): _TerminalBytesIntent(TerminalInput.ctrl('r')),
+  SingleActivator(LogicalKeyboardKey.keyK, control: true): _TerminalBytesIntent(TerminalInput.ctrl('k')),
+  SingleActivator(LogicalKeyboardKey.bracketLeft, control: true): _TerminalBytesIntent(TerminalInput.ctrl('[')),
+  SingleActivator(LogicalKeyboardKey.bracketRight, control: true): _TerminalBytesIntent(TerminalInput.ctrl(']')),
+  SingleActivator(LogicalKeyboardKey.arrowUp, control: true):
+      _TerminalBytesIntent(TerminalInput.ctrlArrow(TerminalArrowDirection.up)),
+  SingleActivator(LogicalKeyboardKey.arrowDown, control: true):
+      _TerminalBytesIntent(TerminalInput.ctrlArrow(TerminalArrowDirection.down)),
+  SingleActivator(LogicalKeyboardKey.arrowLeft, control: true):
+      _TerminalBytesIntent(TerminalInput.ctrlArrow(TerminalArrowDirection.left)),
+  SingleActivator(LogicalKeyboardKey.arrowRight, control: true):
+      _TerminalBytesIntent(TerminalInput.ctrlArrow(TerminalArrowDirection.right)),
+  SingleActivator(LogicalKeyboardKey.tab, shift: true): _TerminalBytesIntent(TerminalInput.shiftTab()),
+  SingleActivator(LogicalKeyboardKey.f1): _TerminalBytesIntent(TerminalInput.functionKey(1)),
+  SingleActivator(LogicalKeyboardKey.f2): _TerminalBytesIntent(TerminalInput.functionKey(2)),
+  SingleActivator(LogicalKeyboardKey.f3): _TerminalBytesIntent(TerminalInput.functionKey(3)),
+  SingleActivator(LogicalKeyboardKey.f4): _TerminalBytesIntent(TerminalInput.functionKey(4)),
+  SingleActivator(LogicalKeyboardKey.f5): _TerminalBytesIntent(TerminalInput.functionKey(5)),
+  SingleActivator(LogicalKeyboardKey.f6): _TerminalBytesIntent(TerminalInput.functionKey(6)),
+  SingleActivator(LogicalKeyboardKey.f7): _TerminalBytesIntent(TerminalInput.functionKey(7)),
+  SingleActivator(LogicalKeyboardKey.f8): _TerminalBytesIntent(TerminalInput.functionKey(8)),
+  SingleActivator(LogicalKeyboardKey.f9): _TerminalBytesIntent(TerminalInput.functionKey(9)),
+  SingleActivator(LogicalKeyboardKey.f10): _TerminalBytesIntent(TerminalInput.functionKey(10)),
+  SingleActivator(LogicalKeyboardKey.f11): _TerminalBytesIntent(TerminalInput.functionKey(11)),
+  SingleActivator(LogicalKeyboardKey.f12): _TerminalBytesIntent(TerminalInput.functionKey(12)),
+  SingleActivator(LogicalKeyboardKey.pageUp): _TerminalBytesIntent(TerminalInput.pageUp()),
+  SingleActivator(LogicalKeyboardKey.pageDown): _TerminalBytesIntent(TerminalInput.pageDown()),
+  SingleActivator(LogicalKeyboardKey.home): _TerminalBytesIntent(TerminalInput.home()),
+  SingleActivator(LogicalKeyboardKey.end): _TerminalBytesIntent(TerminalInput.end()),
+};
 
 class _ImagePreviewStrip extends StatelessWidget {
   const _ImagePreviewStrip({required this.paths, required this.onRemove});
