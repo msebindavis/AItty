@@ -14,15 +14,15 @@ class TerminalKeyboardPanel extends StatelessWidget {
     super.key,
     required this.ctrlActive,
     required this.altActive,
+    required this.keyboardActive,
     required this.onKeyAction,
-    required this.onChar,
     required this.onArrow,
   });
 
   final bool ctrlActive;
   final bool altActive;
+  final bool keyboardActive;
   final TerminalKeyHandler onKeyAction;
-  final ValueChanged<String> onChar;
   final ValueChanged<TerminalArrowDirection> onArrow;
 
   @override
@@ -33,20 +33,12 @@ class TerminalKeyboardPanel extends StatelessWidget {
         border: Border(top: BorderSide(color: ObsidianColors.outlineVariant, width: 0.5)),
       ),
       padding: const EdgeInsets.fromLTRB(AppSpacing.sm, AppSpacing.sm, AppSpacing.sm, AppSpacing.sm),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _ModifierStrip(
-            ctrlActive: ctrlActive,
-            altActive: altActive,
-            onKeyAction: onKeyAction,
-            onArrow: onArrow,
-          ),
-          if (ctrlActive || altActive) ...[
-            const SizedBox(height: 6),
-            _StickyCharStrip(onChar: onChar),
-          ],
-        ],
+      child: _ModifierStrip(
+        ctrlActive: ctrlActive,
+        altActive: altActive,
+        keyboardActive: keyboardActive,
+        onKeyAction: onKeyAction,
+        onArrow: onArrow,
       ),
     );
   }
@@ -56,12 +48,14 @@ class _ModifierStrip extends StatelessWidget {
   const _ModifierStrip({
     required this.ctrlActive,
     required this.altActive,
+    required this.keyboardActive,
     required this.onKeyAction,
     required this.onArrow,
   });
 
   final bool ctrlActive;
   final bool altActive;
+  final bool keyboardActive;
   final TerminalKeyHandler onKeyAction;
   final ValueChanged<TerminalArrowDirection> onArrow;
 
@@ -102,40 +96,12 @@ class _ModifierStrip extends StatelessWidget {
           onTap: () => onKeyAction(TerminalKeyAction.openExtended),
         ),
         _IconModChip(
-          icon: Icons.keyboard_hide_outlined,
-          tooltip: 'Hide input bar',
+          icon: keyboardActive ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined,
+          tooltip: keyboardActive ? 'Hide keyboard' : 'Show keyboard',
+          active: keyboardActive,
           onTap: () => onKeyAction(TerminalKeyAction.hideKeyboard),
         ),
       ],
-    );
-  }
-}
-
-class _StickyCharStrip extends StatelessWidget {
-  const _StickyCharStrip({required this.onChar});
-
-  static const _stickyLetters = 'cdefghijklmnorstuwxyz[]';
-
-  final ValueChanged<String> onChar;
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final char in _stickyLetters.split(''))
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: _ModChip(
-                label: char.toUpperCase(),
-                active: true,
-                compact: true,
-                onTap: () => onChar(char),
-              ),
-            ),
-        ],
-      ),
     );
   }
 }
@@ -145,13 +111,11 @@ class _ModChip extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.active = false,
-    this.compact = false,
   });
 
   final String label;
   final VoidCallback onTap;
   final bool active;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -166,7 +130,7 @@ class _ModChip extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
           child: Container(
-            padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 12, vertical: compact ? 5 : 7),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
               border: Border.all(color: ObsidianColors.outlineVariant.withValues(alpha: 0.25)),
@@ -174,7 +138,7 @@ class _ModChip extends StatelessWidget {
             child: Text(
               label,
               style: AppTypography.mono(
-                size: compact ? 11 : 12,
+                size: 12,
                 color: active ? ObsidianColors.primary : ObsidianColors.onSurface,
               ),
             ),

@@ -93,27 +93,6 @@ abstract final class TerminalInput {
   static Uint8List text(String text) => Uint8List.fromList(utf8.encode(text));
 
   static Uint8List commandLine(String command) => text('$command\n');
-
-  /// Default tmux prefix key (Ctrl+b).
-  static Uint8List tmuxPrefix() => Uint8List.fromList([0x02]);
-
-  /// Enters tmux copy/scroll mode (`[` after prefix).
-  static Uint8List tmuxCopyModeOpen() => Uint8List.fromList([0x5b]);
-
-  /// Default tmux prefix (Ctrl+b) then `[` — enters copy/scroll mode.
-  static Uint8List tmuxCopyModeEnter() => Uint8List.fromList([0x02, 0x5b]);
-
-  /// Exits tmux copy mode.
-  static Uint8List tmuxCopyModeExit() => text('q');
-
-  /// Vi copy-mode: jump to oldest line in scrollback.
-  static Uint8List tmuxCopyModeTopVi() => text('g');
-
-  /// Emacs copy-mode: jump to oldest line (M-<).
-  static Uint8List tmuxCopyModeTopEmacs() => Uint8List.fromList([0x1b, 0x3c]);
-
-  /// Vi copy-mode: jump to newest line (live edge).
-  static Uint8List tmuxCopyModeBottom() => text('G');
 }
 
 enum TerminalArrowDirection { left, right, up, down }

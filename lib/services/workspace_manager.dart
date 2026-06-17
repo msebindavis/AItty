@@ -269,13 +269,6 @@ class WorkspaceManager extends ChangeNotifier {
         );
         if (tmuxCmd.isNotEmpty) {
           conn.write(pane.channelId, '$tmuxCmd\n');
-          await Future<void>.delayed(const Duration(milliseconds: 400));
-          // After attach, move the active pane to the expected project directory.
-          // Listing may show bookmark/pane path while the new client lands elsewhere.
-          if (resumeOnly && tmuxCwd != null) {
-            conn.write(pane.channelId, 'cd ${_shellQuote(tmuxCwd)}\n');
-            await Future<void>.delayed(const Duration(milliseconds: 150));
-          }
         }
       } else {
         conn.write(

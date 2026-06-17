@@ -38,7 +38,6 @@ import 'terminal_keyboard/terminal_gesture_layer.dart';
 import 'terminal_keyboard/terminal_key_catalog.dart';
 import 'terminal_keyboard/terminal_keyboard_panel.dart';
 import 'terminal_theme.dart';
-import 'tmux_side_scroll_rail.dart';
 
 class WorkspaceScreen extends ConsumerStatefulWidget {
   const WorkspaceScreen({super.key, required this.workspaceId});
@@ -58,12 +57,13 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   bool _terminalReady = false;
   bool _commandBarReady = false;
   final _commandFocusNode = FocusNode();
+  final _terminalFocusNode = FocusNode();
+  final _terminalViewKey = GlobalKey<TerminalViewState>();
   final _commandHistoryByPaneId = <String, CommandHistory>{};
   String? _trackedInputPaneId;
   final _speechDictation = SpeechDictation();
   String _dictationPrefix = '';
   bool _dictationListening = false;
-  bool _inputHidden = false;
   double _terminalFontScale = 1;
   List<TerminalSnippet> _snippets = const [];
   late final WorkspaceManager _workspaceManager;
@@ -73,6 +73,8 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     super.initState();
     _workspaceManager = ref.read(workspaceManagerProvider);
     _workspaceManager.addListener(_onWorkspaceManagerChanged);
+    _commandFocusNode.addListener(_onCommandFocusChanged);
+    _terminalFocusNode.addListener(_onTerminalFocusChanged);
     _commandFocusNode.onKeyEvent = _handleCommandFocusKey;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _syncCommandInputPane();
@@ -91,6 +93,34 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     _dictationPrefix = '';
     _dictationListening = false;
     _syncCommandInputPane();
+  }
+
+  void _onCommandFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onTerminalFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _useTerminalSoftKeyboard => Platform.isAndroid || Platform.isIOS;
+
+  bool get _terminalInputActive => _terminalFocusNode.hasFocus && !_commandFocusNode.hasFocus;
+
+  void _focusTerminal({bool showSoftKeyboard = false}) {
+    _commandFocusNode.unfocus();
+    final terminal = _terminalViewKey.currentState;
+    if (terminal != null) {
+      terminal.focusForInput(showSoftKeyboard: showSoftKeyboard && _useTerminalSoftKeyboard);
+      return;
+    }
+    _terminalFocusNode.requestFocus();
+  }
+
+  void _dismissTerminalInput() {
+    _terminalViewKey.currentState?.dismissInput();
+    if (!_terminalFocusNode.hasFocus) return;
+    _terminalFocusNode.unfocus();
   }
 
   CommandHistory get _commandHistory {
@@ -138,7 +168,9 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       if (!mounted) return;
       setState(() => _terminalReady = true);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _commandBarReady = true);
+        if (!mounted) return;
+        setState(() => _commandBarReady = true);
+        _focusTerminal();
       });
     });
   }
@@ -189,6 +221,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     _speechDictation.dispose();
     _commandController.dispose();
     _commandFocusNode.dispose();
+    _terminalFocusNode.dispose();
     super.dispose();
   }
 
@@ -210,10 +243,6 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     }
   }
 
-  void _sendCtrlChar(String char) => _sendTerminalBytes(TerminalInput.ctrl(char));
-
-  void _sendAltChar(String char) => _sendTerminalBytes(TerminalInput.alt(char));
-
   void _sendArrow(TerminalArrowDirection direction) {
     if (_ctrl && _alt) {
       _sendTerminalBytes(TerminalInput.modifiedArrow(direction: direction, modifier: 7));
@@ -228,18 +257,6 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       return;
     }
     _sendTerminalBytes(TerminalInput.arrow(direction), clearModifiers: false);
-  }
-
-  void _sendStickyChar(String char) {
-    if (_ctrl) {
-      _sendCtrlChar(char);
-      return;
-    }
-    if (_alt) {
-      _sendAltChar(char);
-      return;
-    }
-    _sendTerminalBytes(TerminalInput.text(char));
   }
 
   void _exitWorkspace() {
@@ -271,7 +288,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     _commandHistory.add(command);
     _commandController.clear();
     _commandHistory.resetBrowse();
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+      _focusTerminal();
+    }
   }
 
   void _setCommandText(String text) {
@@ -329,8 +349,11 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         _openExtendedKeyboard();
         return;
       case TerminalKeyAction.hideKeyboard:
-        FocusManager.instance.primaryFocus?.unfocus();
-        setState(() => _inputHidden = !_inputHidden);
+        if (_terminalInputActive) {
+          _dismissTerminalInput();
+        } else {
+          _focusTerminal(showSoftKeyboard: _useTerminalSoftKeyboard);
+        }
         return;
       case TerminalKeyAction.toggleCtrl:
         setState(() => _ctrl = !_ctrl);
@@ -419,7 +442,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         child: Focus(
           autofocus: false,
           child: Scaffold(
-      backgroundColor: ObsidianColors.terminalBackground,
+      backgroundColor: isTerminalActive ? hostTerminalTheme.background : ObsidianColors.background,
       body: SafeArea(
         child: Column(
           children: [
@@ -493,32 +516,31 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                         (i) => _buildTab(workspace, i, isActive: i == activeIndex),
                       ),
                     )
-                  : const ColoredBox(
-                      color: ObsidianColors.terminalBackground,
-                      child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                  : ColoredBox(
+                      color: isTerminalActive ? hostTerminalTheme.background : ObsidianColors.background,
+                      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
                     ),
             ),
             if (_commandBarReady && isTerminalActive) ...[
-              if (!_inputHidden)
-                _CommandInputBar(
-                  controller: _commandController,
-                  focusNode: _commandFocusNode,
-                  listening: _dictationListening,
-                  recentCommands: _commandHistory.recent(),
-                  onSend: () => _sendCommand(_commandController.text),
-                  onExpand: () async {
-                    final text = await CommandEditorSheet.show(context, initial: _commandController.text);
-                    if (text != null && text.isNotEmpty) _sendCommand(text);
-                  },
-                  onImage: () => _pickImage(workspace),
-                  onMic: _toggleVoiceDictation,
-                  onSelectHistory: _selectHistoryCommand,
-                ),
+              _CommandInputBar(
+                controller: _commandController,
+                focusNode: _commandFocusNode,
+                listening: _dictationListening,
+                recentCommands: _commandHistory.recent(),
+                onSend: () => _sendCommand(_commandController.text),
+                onExpand: () async {
+                  final text = await CommandEditorSheet.show(context, initial: _commandController.text);
+                  if (text != null && text.isNotEmpty) _sendCommand(text);
+                },
+                onImage: () => _pickImage(workspace),
+                onMic: _toggleVoiceDictation,
+                onSelectHistory: _selectHistoryCommand,
+              ),
               TerminalKeyboardPanel(
                 ctrlActive: _ctrl,
                 altActive: _alt,
+                keyboardActive: _terminalInputActive,
                 onKeyAction: _handleTerminalKeyAction,
-                onChar: _sendStickyChar,
                 onArrow: _sendArrow,
               ),
             ],
@@ -556,9 +578,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         key: ValueKey('terminal-${pane.id}'),
         terminal: pane.terminal,
         controller: pane.controller,
-        useTmux: pane.useTmux,
         fontScale: _terminalFontScale,
-        onScrollStep: _sendRaw,
+        isActive: isActive,
+        terminalViewKey: isActive ? _terminalViewKey : null,
+        terminalFocusNode: isActive ? _terminalFocusNode : null,
         onGestureArrow: _sendArrow,
         onGestureTab: () => _sendTerminalBytes(TerminalInput.tab()),
         onFontScaleChanged: (scale) => setState(() => _terminalFontScale = scale),
@@ -590,6 +613,12 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   void _setActiveTab(int index) {
     _workspaceManager.updateWorkspaceUi(widget.workspaceId, activeTabIndex: index);
     _syncCommandInputPane();
+    final workspace = _workspace;
+    if (workspace != null && index < workspace.terminals.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusTerminal();
+      });
+    }
   }
 
   Future<void> _closeTerminalTab(TerminalPane pane) async {
@@ -869,9 +898,10 @@ class _SessionTerminalPanel extends StatefulWidget {
     super.key,
     required this.terminal,
     required this.controller,
-    required this.useTmux,
     required this.fontScale,
-    required this.onScrollStep,
+    required this.isActive,
+    required this.terminalViewKey,
+    required this.terminalFocusNode,
     required this.onGestureArrow,
     required this.onGestureTab,
     required this.onFontScaleChanged,
@@ -879,9 +909,10 @@ class _SessionTerminalPanel extends StatefulWidget {
 
   final Terminal terminal;
   final TerminalController controller;
-  final bool useTmux;
   final double fontScale;
-  final void Function(Uint8List bytes) onScrollStep;
+  final bool isActive;
+  final GlobalKey<TerminalViewState>? terminalViewKey;
+  final FocusNode? terminalFocusNode;
   final ValueChanged<TerminalArrowDirection> onGestureArrow;
   final VoidCallback onGestureTab;
   final ValueChanged<double> onFontScaleChanged;
@@ -891,10 +922,6 @@ class _SessionTerminalPanel extends StatefulWidget {
 }
 
 class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
-  var _tmuxCopyMode = false;
-  var _tmuxScrollReady = false;
-  Future<void>? _prepareScrollFuture;
-
   @override
   void initState() {
     super.initState();
@@ -903,9 +930,6 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
 
   @override
   void dispose() {
-    if (_tmuxCopyMode) {
-      widget.onScrollStep(TerminalInput.tmuxCopyModeExit());
-    }
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
@@ -917,58 +941,6 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
       oldWidget.controller.removeListener(_onControllerChanged);
       widget.controller.addListener(_onControllerChanged);
     }
-    if (oldWidget.terminal != widget.terminal) {
-      if (_tmuxCopyMode) {
-        oldWidget.onScrollStep(TerminalInput.tmuxCopyModeExit());
-      }
-      _tmuxCopyMode = false;
-      _tmuxScrollReady = false;
-      _prepareScrollFuture = null;
-    }
-  }
-
-  Future<void> _prepareTmuxScroll() async {
-    if (!widget.useTmux || _tmuxScrollReady) return;
-    if (_prepareScrollFuture != null) {
-      await _prepareScrollFuture;
-      return;
-    }
-    _prepareScrollFuture = _enterTmuxCopyAtTop();
-    await _prepareScrollFuture;
-    _prepareScrollFuture = null;
-  }
-
-  Future<void> _enterTmuxCopyAtTop() async {
-    if (!_tmuxCopyMode) {
-      _tmuxCopyMode = true;
-      widget.onScrollStep(TerminalInput.tmuxPrefix());
-      await Future<void>.delayed(const Duration(milliseconds: 80));
-      if (!mounted) return;
-      widget.onScrollStep(TerminalInput.tmuxCopyModeOpen());
-      await Future<void>.delayed(const Duration(milliseconds: 180));
-      if (mounted) setState(() {});
-    }
-    if (!mounted) return;
-    widget.onScrollStep(TerminalInput.tmuxCopyModeTopVi());
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    if (!mounted) return;
-    widget.onScrollStep(TerminalInput.tmuxCopyModeTopEmacs());
-    await Future<void>.delayed(const Duration(milliseconds: 80));
-    if (!mounted) return;
-    _tmuxScrollReady = true;
-  }
-
-  void _exitTmuxCopyMode() {
-    if (!_tmuxCopyMode) return;
-    _tmuxCopyMode = false;
-    _tmuxScrollReady = false;
-    _prepareScrollFuture = null;
-    widget.onScrollStep(TerminalInput.tmuxCopyModeExit());
-    setState(() {});
-  }
-
-  void _scrollTmux({required bool up, TmuxScrollStep step = TmuxScrollStep.line}) {
-    dispatchTmuxScroll(widget.onScrollStep, up: up, step: step);
   }
 
   void _onControllerChanged() {
@@ -1014,19 +986,20 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
   Widget build(BuildContext context) {
     final mobile = Platform.isAndroid || Platform.isIOS;
     final hasSelection = widget.controller.selection != null;
-    final showScrollRail = widget.useTmux;
-    final terminalStyle = TerminalStyle(
-      fontFamily: obsidianTerminalTextStyle.fontFamily,
-      fontSize: (obsidianTerminalTextStyle.fontSize) * widget.fontScale,
+    final terminalStyle = hostTerminalTextStyle.copyWith(
+      fontSize: hostTerminalTextStyle.fontSize * widget.fontScale,
     );
     final terminalBody = TerminalView(
       widget.terminal,
+      key: widget.terminalViewKey,
       controller: widget.controller,
-      theme: obsidianTerminalTheme,
+      focusNode: widget.terminalFocusNode,
+      theme: hostTerminalTheme,
       textStyle: terminalStyle,
-      autofocus: false,
+      autofocus: widget.isActive,
+      hardwareKeyboardOnly: !mobile,
+      keyboardType: TextInputType.text,
       deleteDetection: mobile,
-      simulateScroll: !widget.useTmux,
       onSecondaryTapDown: (_, _) {},
       onSecondaryTapUp: (details, _) => _showCopyMenu(details),
     );
@@ -1041,31 +1014,16 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
             onFontScaleChanged: widget.onFontScaleChanged,
             child: terminalBody,
           ),
-          if (showScrollRail)
-            Positioned(
-              right: 6,
-              top: 48,
-              bottom: 8,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: TmuxSideScrollRail(
-                  copyModeActive: _tmuxCopyMode,
-                  onPrepareScroll: _prepareTmuxScroll,
-                  onExitCopyMode: _exitTmuxCopyMode,
-                  onScroll: _scrollTmux,
-                ),
-              ),
-            ),
           if (hasSelection)
             Positioned(
               top: 8,
               right: 8,
               child: Material(
-                elevation: 4,
-                borderRadius: BorderRadius.circular(8),
-                color: ObsidianColors.surfaceContainerHigh,
+                elevation: 2,
+                borderRadius: BorderRadius.circular(4),
+                color: hostTerminalTheme.background.withValues(alpha: 0.92),
                 child: IconButton(
-                  icon: const Icon(Icons.copy, size: 18),
+                  icon: Icon(Icons.copy, size: 18, color: hostTerminalTheme.foreground),
                   tooltip: 'Copy',
                   onPressed: _copySelection,
                 ),
@@ -1267,6 +1225,11 @@ class _CommandInputBar extends StatelessWidget {
               focusNode: focusNode,
               controller: controller,
               autofocus: false,
+              keyboardType: TextInputType.text,
+              textInputAction: TextInputAction.send,
+              autocorrect: false,
+              enableSuggestions: false,
+              enableIMEPersonalizedLearning: true,
               style: AppTypography.inter(size: 14, color: ObsidianColors.onSurface),
               onSubmitted: (_) => onSend(),
               decoration: InputDecoration(
