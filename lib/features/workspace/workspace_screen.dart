@@ -580,6 +580,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         controller: pane.controller,
         fontScale: _terminalFontScale,
         isActive: isActive,
+        simulateScroll: !pane.useTmux,
         terminalViewKey: isActive ? _terminalViewKey : null,
         terminalFocusNode: isActive ? _terminalFocusNode : null,
         onGestureArrow: _sendArrow,
@@ -900,6 +901,7 @@ class _SessionTerminalPanel extends StatefulWidget {
     required this.controller,
     required this.fontScale,
     required this.isActive,
+    required this.simulateScroll,
     required this.terminalViewKey,
     required this.terminalFocusNode,
     required this.onGestureArrow,
@@ -911,6 +913,7 @@ class _SessionTerminalPanel extends StatefulWidget {
   final TerminalController controller;
   final double fontScale;
   final bool isActive;
+  final bool simulateScroll;
   final GlobalKey<TerminalViewState>? terminalViewKey;
   final FocusNode? terminalFocusNode;
   final ValueChanged<TerminalArrowDirection> onGestureArrow;
@@ -1000,6 +1003,7 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
       hardwareKeyboardOnly: !mobile,
       keyboardType: TextInputType.text,
       deleteDetection: mobile,
+      simulateScroll: widget.simulateScroll,
       onSecondaryTapDown: (_, _) {},
       onSecondaryTapUp: (details, _) => _showCopyMenu(details),
     );
