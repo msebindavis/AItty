@@ -30,6 +30,8 @@ import '../../utils/open_workspace.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/session_name_dialog.dart';
 import '../../widgets/tmux_missing_dialog.dart';
+import '../../widgets/aitty_config_dialog.dart';
+import '../../widgets/workspace_name_dialog.dart';
 import 'browser_tab.dart';
 import 'command_editor_sheet.dart';
 import 'files_tab.dart';
@@ -1539,8 +1541,80 @@ class _HostSessionHubState extends ConsumerState<_HostSessionHub> {
 
   Future<void> _attachSession(RemoteTmuxSession session) async {
     if (_attaching) return;
+    final host = _host;
+    if (host == null) return;
+    
     setState(() => _attaching = true);
     try {
+      final manager = ref.read(workspaceManagerProvider);
+      final sessionCwd = session.cwd ?? '~/';
+      final aittyConfig = await manager.tryLoadAittyConfig(widget.workspace.connection, sessionCwd);
+      setState(() => _attaching = false);
+
+      if (aittyConfig != null && aittyConfig.workspaces.isNotEmpty) {
+        if (!mounted) return;
+        final result = await AittyConfigDialog.show(
+          context,
+          path: sessionCwd,
+          config: aittyConfig,
+        );
+        if (result == null || result.choice == AittyConfigChoice.cancel) return;
+        if (result.choice == AittyConfigChoice.openWorkspace) {
+          final wsConfig = result.workspaceConfig!;
+          if (mounted) setState(() => _attaching = true);
+          final workspace = await manager.restoreFromAitty(
+            host: host,
+            config: wsConfig,
+            workspacePath: sessionCwd,
+            existing: widget.workspace.connection,
+          );
+          
+          int targetIdx = workspace.terminals.indexWhere(
+            (t) => t.useTmux && t.tmuxSessionName == session.name
+          );
+          
+          if (targetIdx != -1) {
+            workspace.activeTabIndex = targetIdx;
+          } else {
+            final pane = await manager.addTerminal(
+              workspace.id,
+              cwd: sessionCwd,
+              tmuxSessionName: session.name,
+              useTmux: true,
+              resumeOnly: true,
+              checkExistingSession: false,
+            );
+            targetIdx = workspace.terminals.indexWhere((t) => t.id == pane.id);
+            if (targetIdx != -1) {
+              workspace.activeTabIndex = targetIdx;
+            }
+          }
+
+          if (mounted) {
+            manager.removeWorkspacePlaceholder(widget.workspaceId);
+            openWorkspace(context, workspace.id, replace: true);
+          }
+          return;
+        }
+      }
+
+      if (!mounted) return;
+      final existingNames = await manager.getExistingWorkspaceNames(
+        widget.workspace.connection,
+        host.id,
+        sessionCwd,
+      );
+
+      if (!mounted) return;
+      final workspaceName = await WorkspaceNameDialog.show(
+        context,
+        title: 'Enter Workspace Name',
+        initialName: session.name,
+        existingNames: existingNames,
+      );
+      if (workspaceName == null || workspaceName.isEmpty) return;
+
+      if (mounted) setState(() => _attaching = true);
       final resolved = await TmuxAvailability.resolve(
         context: context,
         connection: widget.workspace.connection,
@@ -1548,16 +1622,34 @@ class _HostSessionHubState extends ConsumerState<_HostSessionHub> {
       );
       if (!mounted || resolved == null) return;
       if (!resolved.useTmux) {
-        await _openPlainShell(cwd: session.cwd ?? '~');
+        final workspace = await manager.createWorkspace(
+          host: host,
+          cwd: sessionCwd,
+          workspacePath: sessionCwd,
+          name: workspaceName,
+          useTmux: false,
+          existing: widget.workspace.connection,
+        );
+        if (mounted) {
+          manager.removeWorkspacePlaceholder(widget.workspaceId);
+          openWorkspace(context, workspace.id, replace: true);
+        }
         return;
       }
-      final result = await ref.read(workspaceManagerProvider).attachToTmuxSession(
-            widget.workspaceId,
-            session.name,
-            cwd: session.cwd,
-          );
-      if (mounted && result.workspaceId != widget.workspaceId) {
-        openWorkspace(context, result.workspaceId);
+
+      final workspace = await manager.createWorkspace(
+        host: host,
+        cwd: sessionCwd,
+        workspacePath: sessionCwd,
+        tmuxSessionName: session.name,
+        name: workspaceName,
+        useTmux: true,
+        startupResumeOnly: true,
+        existing: widget.workspace.connection,
+      );
+      if (mounted) {
+        manager.removeWorkspacePlaceholder(widget.workspaceId);
+        openWorkspace(context, workspace.id, replace: true);
       }
     } catch (e) {
       if (mounted) {
@@ -1570,16 +1662,92 @@ class _HostSessionHubState extends ConsumerState<_HostSessionHub> {
 
   Future<void> _openPlainShell({String cwd = '~'}) async {
     if (_attaching) return;
+    final host = _host;
+    if (host == null) return;
+
     setState(() => _attaching = true);
     try {
-      await ref.read(workspaceManagerProvider).addTerminal(
-            widget.workspaceId,
-            cwd: cwd,
-            useTmux: false,
+      final manager = ref.read(workspaceManagerProvider);
+      final aittyConfig = await manager.tryLoadAittyConfig(widget.workspace.connection, cwd);
+      setState(() => _attaching = false);
+
+      if (aittyConfig != null && aittyConfig.workspaces.isNotEmpty) {
+        if (!mounted) return;
+        final result = await AittyConfigDialog.show(
+          context,
+          path: cwd,
+          config: aittyConfig,
+        );
+        if (result == null || result.choice == AittyConfigChoice.cancel) return;
+        if (result.choice == AittyConfigChoice.openWorkspace) {
+          final wsConfig = result.workspaceConfig!;
+          if (mounted) setState(() => _attaching = true);
+          final workspace = await manager.restoreFromAitty(
+            host: host,
+            config: wsConfig,
+            workspacePath: cwd,
+            existing: widget.workspace.connection,
           );
+          
+          int targetIdx = workspace.terminals.indexWhere(
+            (t) => !t.useTmux
+          );
+          
+          if (targetIdx != -1) {
+            workspace.activeTabIndex = targetIdx;
+          } else {
+            final pane = await manager.addTerminal(
+              workspace.id,
+              cwd: cwd,
+              useTmux: false,
+              checkExistingSession: false,
+            );
+            targetIdx = workspace.terminals.indexWhere((t) => t.id == pane.id);
+            if (targetIdx != -1) {
+              workspace.activeTabIndex = targetIdx;
+            }
+          }
+
+          if (mounted) {
+            manager.removeWorkspacePlaceholder(widget.workspaceId);
+            openWorkspace(context, workspace.id, replace: true);
+          }
+          return;
+        }
+      }
+
+      if (!mounted) return;
+      final existingNames = await manager.getExistingWorkspaceNames(
+        widget.workspace.connection,
+        host.id,
+        cwd,
+      );
+
+      if (!mounted) return;
+      final workspaceName = await WorkspaceNameDialog.show(
+        context,
+        title: 'Enter Workspace Name',
+        initialName: host.label,
+        existingNames: existingNames,
+      );
+      if (workspaceName == null || workspaceName.isEmpty) return;
+
+      if (mounted) setState(() => _attaching = true);
+      final workspace = await manager.createWorkspace(
+        host: host,
+        cwd: cwd,
+        workspacePath: cwd,
+        name: workspaceName,
+        useTmux: false,
+        existing: widget.workspace.connection,
+      );
+      if (mounted) {
+        manager.removeWorkspacePlaceholder(widget.workspaceId);
+        openWorkspace(context, workspace.id, replace: true);
+      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open shell: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open plain shell: $e')));
       }
     } finally {
       if (mounted) setState(() => _attaching = false);

@@ -38,6 +38,7 @@ class Workspace {
     required this.id,
     required this.name,
     required this.hostId,
+    required this.workspacePath,
     required this.connection,
     required this.terminals,
     required this.auxTabs,
@@ -50,6 +51,7 @@ class Workspace {
   final String id;
   String name;
   final String hostId;
+  final String workspacePath;
   SshConnection connection;
   List<TerminalPane> terminals;
   List<WorkspaceTab> auxTabs;

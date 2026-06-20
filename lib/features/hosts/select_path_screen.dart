@@ -14,8 +14,10 @@ import '../../widgets/tmux_missing_dialog.dart';
 import '../../services/ssh_connection.dart';
 import '../../services/ssh_key_repository.dart';
 import '../../utils/open_workspace.dart';
+import '../../widgets/aitty_config_dialog.dart';
 import '../../widgets/new_folder_dialog.dart';
 import '../../widgets/section_header.dart';
+import '../../widgets/workspace_name_dialog.dart';
 
 enum _PathView { recents, browse }
 
@@ -268,15 +270,120 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
       }
       if (host == null) throw StateError('Host not found');
 
-      final workspaceId = widget.workspaceId;
       final manager = ref.read(workspaceManagerProvider);
-      final paneIndex = workspaceId != null
-          ? (manager.getWorkspace(workspaceId)?.terminals.length ?? 0)
-          : 0;
+
+      final activeWorkspace = widget.workspaceId != null ? manager.getWorkspace(widget.workspaceId!) : null;
+      final isPlaceholder = activeWorkspace != null && activeWorkspace.terminals.isEmpty;
+
+      if (widget.workspaceId == null || isPlaceholder) {
+        if (mounted) setState(() => _connecting = true);
+        final aittyConfig = await manager.tryLoadAittyConfig(_connection!, _selectedDir);
+        if (mounted) setState(() => _connecting = false);
+
+        if (aittyConfig != null && aittyConfig.workspaces.isNotEmpty) {
+          final result = await AittyConfigDialog.show(
+            context,
+            path: _selectedDir,
+            config: aittyConfig,
+          );
+          
+          if (!mounted || result == null || result.choice == AittyConfigChoice.cancel) {
+            return;
+          }
+          
+          if (result.choice == AittyConfigChoice.openWorkspace) {
+            final wsConfig = result.workspaceConfig!;
+            if (mounted) setState(() => _connecting = true);
+            
+            final workspace = await manager.restoreFromAitty(
+              host: host,
+              config: wsConfig,
+              workspacePath: _selectedDir,
+              existing: _ownsConnection ? _connection : null,
+            );
+            
+            if (!mounted) return;
+            if (isPlaceholder) {
+              manager.removeWorkspacePlaceholder(widget.workspaceId!);
+            }
+            _connection = null;
+            _ownsConnection = false;
+            if (mounted) openWorkspace(context, workspace.id, replace: true);
+            return;
+          }
+        }
+
+        if (!mounted) return;
+        final existingNames = await manager.getExistingWorkspaceNames(
+          _connection!,
+          hostId,
+          _selectedDir,
+        );
+
+        if (!mounted) return;
+        final workspaceName = await WorkspaceNameDialog.show(
+          context,
+          title: 'Enter Workspace Name',
+          initialName: _selectedDirName == '/' ? host.label : _selectedDirName,
+          existingNames: existingNames,
+        );
+        if (workspaceName == null || workspaceName.isEmpty) return;
+
+        final choice = await SessionNameDialog.show(
+          context,
+          title: 'Start terminal',
+          initialName: await manager.suggestSessionName(host, paneIndex: 0),
+        );
+        if (!mounted || choice == null) return;
+
+        var useTmux = choice.useTmux;
+        if (choice.useTmux) {
+          if (mounted) setState(() => _connecting = false);
+          final resolved = await TmuxAvailability.resolve(
+            context: context,
+            connection: _connection!,
+            wantsTmux: true,
+          );
+          if (!mounted) return;
+          if (resolved == null) return;
+          useTmux = resolved.useTmux;
+          if (mounted) setState(() => _connecting = true);
+        }
+
+        await ref.read(recentPathsStoreProvider).recordRecentPath(hostId, _selectedDir);
+
+        final workspace = await manager.createWorkspace(
+          host: host,
+          cwd: _selectedDir,
+          workspacePath: _selectedDir,
+          tmuxSessionName: choice.sessionName,
+          name: workspaceName,
+          useTmux: useTmux,
+          existing: _ownsConnection ? _connection : null,
+        );
+        
+        if (!mounted) return;
+        if (isPlaceholder) {
+          manager.removeWorkspacePlaceholder(widget.workspaceId!);
+        }
+        _connection = null;
+        _ownsConnection = false;
+        if (mounted) {
+          if (isPlaceholder) {
+            context.pop();
+          }
+          openWorkspace(context, workspace.id, replace: true);
+        }
+        return;
+      }
+
+      // Existing active real workspace: adding a new terminal tab.
+      final workspaceId = widget.workspaceId!;
+      final paneIndex = manager.getWorkspace(workspaceId)?.terminals.length ?? 0;
 
       final choice = await SessionNameDialog.show(
         context,
-        title: workspaceId != null ? 'New terminal' : 'Start terminal',
+        title: 'New terminal',
         initialName: await manager.suggestSessionName(host, paneIndex: paneIndex),
       );
       if (!mounted || choice == null) {
@@ -300,35 +407,19 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
 
       await ref.read(recentPathsStoreProvider).recordRecentPath(hostId, _selectedDir);
 
-      if (workspaceId != null) {
-        await manager.addTerminal(
-          workspaceId,
-          cwd: _selectedDir,
-          tmuxSessionName: choice.useTmux ? choice.sessionName : null,
-          useTmux: useTmux,
-          tmuxModeOverride: useTmux ? HostTmuxMode.createNew : null,
-        );
-        if (!mounted) return;
-        _connection = null;
-        if (mounted) {
-          context.pop();
-          openWorkspace(context, workspaceId);
-        }
-        return;
-      }
-
-      final workspace = await manager.createWorkspace(
-            host: host,
-            cwd: _selectedDir,
-            tmuxSessionName: choice.sessionName,
-            name: useTmux ? choice.sessionName : host.label,
-            useTmux: useTmux,
-            existing: _ownsConnection ? _connection : null,
-          );
+      await manager.addTerminal(
+        workspaceId,
+        cwd: _selectedDir,
+        tmuxSessionName: choice.useTmux ? choice.sessionName : null,
+        useTmux: useTmux,
+        tmuxModeOverride: useTmux ? HostTmuxMode.createNew : null,
+      );
       if (!mounted) return;
       _connection = null;
-      _ownsConnection = false;
-      if (mounted) openWorkspace(context, workspace.id, replace: true);
+      if (mounted) {
+        context.pop();
+        openWorkspace(context, workspaceId);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Connection failed: $e')));

@@ -37,7 +37,7 @@ Future<void> connectHostAndOpen(
   );
 
   try {
-    final ws = await ref.read(workspaceManagerProvider).connectHostWorkspace(host: host);
+    final ws = await ref.read(workspaceManagerProvider).connectHostWorkspace(host: host, workspacePath: '/home/${host.username}');
     if (context.mounted) {
       Navigator.of(context, rootNavigator: true).pop();
       openWorkspace(context, ws.id, replace: replace);
