@@ -273,6 +273,11 @@ class WorkspaceManager extends ChangeNotifier {
         notifyListeners();
       },
       onStderr: (chunk) => pane.terminal.write(chunk),
+      onDone: () {
+        if (workspace.connection.isConnected) {
+          detachPane(workspace.id, pane.id, keepBookmark: false, isClosed: true);
+        }
+      },
     );
 
     pane.terminal.onResize = (w, h, _, __) {
@@ -361,14 +366,19 @@ class WorkspaceManager extends ChangeNotifier {
     final workspace = _workspaces[workspaceId];
     if (workspace == null) throw StateError('Workspace not found');
 
-    final open = findWorkspaceByTmuxSession(workspace.hostId, sessionName);
-    if (open != null) {
-      focusTmuxSession(open.id, sessionName);
+    TerminalPane? existingPane;
+    for (final p in workspace.terminals) {
+      if (p.useTmux && p.tmuxSessionName == sessionName) {
+        existingPane = p;
+        break;
+      }
+    }
+
+    if (existingPane != null) {
+      focusTmuxSession(workspace.id, sessionName);
       return (
-        workspaceId: open.id,
-        pane: open.terminals.firstWhere(
-          (p) => p.useTmux && p.tmuxSessionName == sessionName,
-        ),
+        workspaceId: workspace.id,
+        pane: existingPane,
       );
     }
 
@@ -499,12 +509,16 @@ class WorkspaceManager extends ChangeNotifier {
         : 'shell-${paneId.substring(0, 8)}';
 
     if (useTmux && checkExistingSession) {
-      final open = findWorkspaceByTmuxSession(workspace.hostId, name);
-      if (open != null) {
-        focusTmuxSession(open.id, name);
-        return open.terminals.firstWhere(
-          (p) => p.useTmux && p.tmuxSessionName == name,
-        );
+      TerminalPane? existingPane;
+      for (final p in workspace.terminals) {
+        if (p.useTmux && p.tmuxSessionName == name) {
+          existingPane = p;
+          break;
+        }
+      }
+      if (existingPane != null) {
+        focusTmuxSession(workspace.id, name);
+        return existingPane;
       }
     }
 
@@ -538,21 +552,30 @@ class WorkspaceManager extends ChangeNotifier {
     return pane;
   }
 
-  Future<void> detachPane(String workspaceId, String paneId, {bool keepBookmark = true}) async {
+  Future<void> detachPane(
+    String workspaceId,
+    String paneId, {
+    bool keepBookmark = true,
+    bool isClosed = false,
+  }) async {
     final workspace = _workspaces[workspaceId];
     if (workspace == null) return;
-    final pane = workspace.terminals.firstWhere((p) => p.id == paneId);
-    if (pane.useTmux) {
+    final paneIndex = workspace.terminals.indexWhere((p) => p.id == paneId);
+    if (paneIndex == -1) return;
+    final pane = workspace.terminals[paneIndex];
+    if (pane.useTmux && !isClosed) {
       workspace.connection.write(pane.channelId, TmuxStartup.detach());
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
     await workspace.connection.closeShell(pane.channelId);
-    workspace.terminals.removeWhere((p) => p.id == paneId);
+    workspace.terminals.removeAt(paneIndex);
     if (workspace.activeTabIndex >= workspace.terminals.length + workspace.auxTabs.length) {
       workspace.activeTabIndex = 0;
     }
     if (keepBookmark) {
       await _requireHost(workspace.hostId);
+      syncAittyConfig(workspace.id);
+    } else {
       syncAittyConfig(workspace.id);
     }
     if (workspace.terminals.isEmpty) {
@@ -566,9 +589,14 @@ class WorkspaceManager extends ChangeNotifier {
     if (workspace == null) return;
     final pane = workspace.terminals.firstWhere((p) => p.id == paneId);
     if (pane.useTmux) {
-      workspace.connection.write(pane.channelId, TmuxStartup.killSession(pane.tmuxSessionName));
+      try {
+        await TmuxStartup.runReliableCommand(workspace.connection, 'tmux kill-session -t ${_shellQuote(pane.tmuxSessionName)}');
+      } catch (e) {
+        throw StateError('Failed to kill tmux session on the remote host: $e');
+      }
     }
-    await detachPane(workspaceId, paneId, keepBookmark: false);
+    await detachPane(workspaceId, paneId, keepBookmark: false, isClosed: true);
+    await syncAittyConfig(workspaceId);
   }
 
   Future<void> renamePaneSession(String workspaceId, String paneId, String newName) async {
@@ -582,10 +610,11 @@ class WorkspaceManager extends ChangeNotifier {
       throw StateError('Cannot rename a plain shell tab');
     }
     final oldName = pane.tmuxSessionName;
-    workspace.connection.write(
-      pane.channelId,
-      "tmux rename-session -t ${_shellQuote(oldName)} ${_shellQuote(newName)}\n",
-    );
+    try {
+      await TmuxStartup.runReliableCommand(workspace.connection, 'tmux rename-session -t ${_shellQuote(oldName)} ${_shellQuote(newName)}');
+    } catch (e) {
+      debugPrint('Failed to rename tmux session: $e');
+    }
     pane.tmuxSessionName = newName;
     if (workspace.terminals.length == 1 && workspace.name == oldName) {
       workspace.name = newName;
@@ -603,11 +632,13 @@ class WorkspaceManager extends ChangeNotifier {
     for (final pane in workspace.terminals) {
       if (!pane.useTmux) continue;
       if (endSessions) {
-        workspace.connection.write(pane.channelId, TmuxStartup.killSession(pane.tmuxSessionName));
+        try {
+          await TmuxStartup.runReliableCommand(workspace.connection, 'tmux kill-session -t ${_shellQuote(pane.tmuxSessionName)}');
+        } catch (_) {}
       } else if (settings.detachOnAppClose) {
         workspace.connection.write(pane.channelId, TmuxStartup.detach());
         await _requireHost(workspace.hostId);
-        syncAittyConfig(workspace.id);
+        await _syncAittyConfigWorkspace(workspace);
       }
     }
     if (!endSessions && settings.detachOnAppClose) {
@@ -1042,6 +1073,7 @@ git status --porcelain
     final index = w.auxTabs.indexWhere((t) => t.id == tabId);
     if (index < 0) return;
     w.auxTabs[index] = update(w.auxTabs[index]);
+    syncAittyConfig(workspaceId);
     if (notify) notifyListeners();
   }
 
@@ -1061,6 +1093,7 @@ git status --porcelain
     }
     if (viewMode != null) w.viewMode = viewMode;
     if (auxTabs != null) w.auxTabs = auxTabs;
+    syncAittyConfig(workspaceId);
     notifyListeners();
   }
 
@@ -1189,7 +1222,7 @@ git status --porcelain
 
   Future<Workspace> restoreFromAitty({
     required Host host,
-    required AittyWorkspaceConfig config,
+    required AittyConfig config,
     required String workspacePath,
     SshConnection? existing,
   }) async {
@@ -1249,39 +1282,15 @@ git status --porcelain
 
   Future<void> syncAittyConfig(String workspaceId) async {
     final w = _workspaces[workspaceId];
-    if (w == null || !w.connection.isConnected) return;
-    
-    // 1. Try to load the existing config from the server.
-    AittyConfig? existingConfig;
-    try {
-      existingConfig = await tryLoadAittyConfig(w.connection, w.workspacePath);
-    } catch (_) {}
+    if (w != null) {
+      await _syncAittyConfigWorkspace(w);
+    }
+  }
 
-    // Map of workspace configs keyed by workspace ID.
-    final workspaceMap = <String, AittyWorkspaceConfig>{};
+  Future<void> _syncAittyConfigWorkspace(Workspace w) async {
+    if (!w.connection.isConnected) return;
     
-    // 2. Put existing workspaces from the server into the map.
-    if (existingConfig != null) {
-      for (final ws in existingConfig.workspaces) {
-        workspaceMap[ws.id] = ws;
-      }
-    }
-    
-    // 3. Put all currently open/loaded workspaces in memory for this host and path into the map.
-    final workspacesOnPath = getWorkspacesForPath(w.hostId, w.workspacePath);
-    for (final ws in workspacesOnPath) {
-      workspaceMap[ws.id] = AittyWorkspaceConfig(
-        id: ws.id,
-        name: ws.name,
-        terminals: ws.terminals
-            .map((t) => WorkspaceTemplateEntry(cwd: t.cwd, tmuxSessionName: t.tmuxSessionName, useTmux: t.useTmux))
-            .toList(),
-        auxTabs: ws.auxTabs,
-      );
-    }
-    
-    // 4. Ensure the current workspace itself is in the map.
-    workspaceMap[w.id] = AittyWorkspaceConfig(
+    final config = AittyConfig(
       id: w.id,
       name: w.name,
       terminals: w.terminals
@@ -1290,8 +1299,6 @@ git status --porcelain
       auxTabs: w.auxTabs,
     );
     
-    final finalWorkspaces = workspaceMap.values.toList();
-    final config = AittyConfig(workspaces: finalWorkspaces);
     final jsonString = jsonEncode(config.toJson());
     final bytes = Uint8List.fromList(utf8.encode(jsonString));
     
@@ -1310,30 +1317,6 @@ git status --porcelain
     } catch (_) {
       return null;
     }
-  }
-
-  Future<List<String>> getExistingWorkspaceNames(
-    SshConnection connection,
-    String hostId,
-    String workspacePath,
-  ) async {
-    final names = <String>{};
-    
-    // Load from memory
-    final active = getWorkspacesForPath(hostId, workspacePath);
-    for (final ws in active) {
-      names.add(ws.name);
-    }
-    
-    // Load from server file
-    final config = await tryLoadAittyConfig(connection, workspacePath);
-    if (config != null) {
-      for (final ws in config.workspaces) {
-        names.add(ws.name);
-      }
-    }
-    
-    return names.toList();
   }
 
   Future<void> disposeAll() async {

@@ -13,11 +13,11 @@ import '../../widgets/session_name_dialog.dart';
 import '../../widgets/tmux_missing_dialog.dart';
 import '../../services/ssh_connection.dart';
 import '../../services/ssh_key_repository.dart';
+import '../../services/tmux_startup.dart';
 import '../../utils/open_workspace.dart';
-import '../../widgets/aitty_config_dialog.dart';
+
 import '../../widgets/new_folder_dialog.dart';
 import '../../widgets/section_header.dart';
-import '../../widgets/workspace_name_dialog.dart';
 
 enum _PathView { recents, browse }
 
@@ -280,59 +280,51 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
         final aittyConfig = await manager.tryLoadAittyConfig(_connection!, _selectedDir);
         if (mounted) setState(() => _connecting = false);
 
-        if (aittyConfig != null && aittyConfig.workspaces.isNotEmpty) {
-          final result = await AittyConfigDialog.show(
-            context,
-            path: _selectedDir,
+        if (aittyConfig != null) {
+          if (mounted) setState(() => _connecting = true);
+          
+          final workspace = await manager.restoreFromAitty(
+            host: host,
             config: aittyConfig,
+            workspacePath: _selectedDir,
+            existing: _ownsConnection ? _connection : null,
           );
           
-          if (!mounted || result == null || result.choice == AittyConfigChoice.cancel) {
-            return;
+          if (!mounted) return;
+          if (isPlaceholder) {
+            manager.removeWorkspacePlaceholder(widget.workspaceId!);
           }
-          
-          if (result.choice == AittyConfigChoice.openWorkspace) {
-            final wsConfig = result.workspaceConfig!;
-            if (mounted) setState(() => _connecting = true);
-            
-            final workspace = await manager.restoreFromAitty(
-              host: host,
-              config: wsConfig,
-              workspacePath: _selectedDir,
-              existing: _ownsConnection ? _connection : null,
-            );
-            
-            if (!mounted) return;
-            if (isPlaceholder) {
-              manager.removeWorkspacePlaceholder(widget.workspaceId!);
-            }
-            _connection = null;
-            _ownsConnection = false;
-            if (mounted) openWorkspace(context, workspace.id, replace: true);
-            return;
+          _connection = null;
+          _ownsConnection = false;
+          if (mounted) openWorkspace(context, workspace.id, replace: true);
+          return;
+        }
+
+        final workspaceName = _selectedDirName == '/' ? host.label : _selectedDirName;
+
+        List<({String name, String? cwd})> existingSessions = [];
+        if (_connection != null) {
+          final allSessions = await TmuxStartup.listRemoteSessions(_connection!);
+          final pwd = _selectedDir;
+          final normalizedPwd = pwd.endsWith('/') ? pwd.substring(0, pwd.length - 1) : pwd;
+          existingSessions = allSessions.where((s) {
+            if (s.cwd == null) return false;
+            final normalizedCwd = s.cwd!.endsWith('/') ? s.cwd!.substring(0, s.cwd!.length - 1) : s.cwd!;
+            if (normalizedPwd == '~') return true;
+            return normalizedCwd == normalizedPwd || normalizedCwd.startsWith('$normalizedPwd/');
+          }).toList();
+          if (existingSessions.isEmpty) {
+            existingSessions = allSessions;
           }
         }
 
         if (!mounted) return;
-        final existingNames = await manager.getExistingWorkspaceNames(
-          _connection!,
-          hostId,
-          _selectedDir,
-        );
-
-        if (!mounted) return;
-        final workspaceName = await WorkspaceNameDialog.show(
-          context,
-          title: 'Enter Workspace Name',
-          initialName: _selectedDirName == '/' ? host.label : _selectedDirName,
-          existingNames: existingNames,
-        );
-        if (workspaceName == null || workspaceName.isEmpty) return;
 
         final choice = await SessionNameDialog.show(
           context,
           title: 'Start terminal',
           initialName: await manager.suggestSessionName(host, paneIndex: 0),
+          existingSessions: existingSessions,
         );
         if (!mounted || choice == null) return;
 
@@ -381,10 +373,29 @@ class _SelectPathScreenState extends ConsumerState<SelectPathScreen> {
       final workspaceId = widget.workspaceId!;
       final paneIndex = manager.getWorkspace(workspaceId)?.terminals.length ?? 0;
 
+      List<({String name, String? cwd})> existingSessions = [];
+      if (_connection != null) {
+        final allSessions = await TmuxStartup.listRemoteSessions(_connection!);
+        final pwd = _selectedDir;
+        final normalizedPwd = pwd.endsWith('/') ? pwd.substring(0, pwd.length - 1) : pwd;
+        existingSessions = allSessions.where((s) {
+          if (s.cwd == null) return false;
+          final normalizedCwd = s.cwd!.endsWith('/') ? s.cwd!.substring(0, s.cwd!.length - 1) : s.cwd!;
+          if (normalizedPwd == '~') return true;
+          return normalizedCwd == normalizedPwd || normalizedCwd.startsWith('$normalizedPwd/');
+        }).toList();
+        if (existingSessions.isEmpty) {
+          existingSessions = allSessions;
+        }
+      }
+
+      if (!mounted) return;
+
       final choice = await SessionNameDialog.show(
         context,
         title: 'New terminal',
         initialName: await manager.suggestSessionName(host, paneIndex: paneIndex),
+        existingSessions: existingSessions,
       );
       if (!mounted || choice == null) {
         if (mounted) setState(() => _connecting = false);

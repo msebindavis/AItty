@@ -133,14 +133,18 @@ class SshConnection {
     String channelId, {
     required void Function(String chunk) onStdout,
     void Function(String chunk)? onStderr,
+    VoidCallback? onDone,
   }) {
     final channel = _channel(channelId);
     if (channel == null) return;
     channel.stdoutSub?.cancel();
     channel.stderrSub?.cancel();
-    channel.stdoutSub = channel.session.stdout.listen((data) {
-      onStdout(utf8.decode(data, allowMalformed: true));
-    });
+    channel.stdoutSub = channel.session.stdout.listen(
+      (data) {
+        onStdout(utf8.decode(data, allowMalformed: true));
+      },
+      onDone: onDone,
+    );
     channel.stderrSub = channel.session.stderr.listen((data) {
       onStderr?.call(utf8.decode(data, allowMalformed: true));
     });
@@ -170,13 +174,7 @@ class SshConnection {
 
   /// Drop the cached SFTP client so a new exec channel can open reliably.
   Future<void> prepareForExec() async {
-    final client = _sftp;
-    _sftp = null;
-    if (client != null) {
-      try {
-        client.close();
-      } catch (_) {}
-    }
+    // No-op: previously closed SFTP client, which broke the Files tab.
   }
 
   Future<List<RemoteFileEntry>> listDirectory(String path) async {
@@ -262,15 +260,44 @@ class SshConnection {
   }) async {
     if (!isConnected) throw SSHStateError('Transport is closed');
 
-    final result = await _client
-        .runWithResult(command, stderr: true)
-        .timeout(timeout, onTimeout: () => throw TimeoutException('SSH command timed out', timeout));
-
-    return (
-      stdout: utf8.decode(result.stdout, allowMalformed: true),
-      stderr: utf8.decode(result.stderr, allowMalformed: true),
-      exitCode: result.exitCode,
+    final session = await _client.execute(command);
+    
+    final stdoutBytes = <int>[];
+    final stderrBytes = <int>[];
+    
+    final stdoutDone = Completer<void>();
+    final stderrDone = Completer<void>();
+    
+    final stdoutSub = session.stdout.listen(
+      stdoutBytes.addAll,
+      onDone: stdoutDone.complete,
+      onError: stdoutDone.completeError,
     );
+    final stderrSub = session.stderr.listen(
+      stderrBytes.addAll,
+      onDone: stderrDone.complete,
+      onError: stderrDone.completeError,
+    );
+    
+    try {
+      await Future.wait([
+        stdoutDone.future,
+        stderrDone.future,
+        session.done,
+      ]).timeout(timeout);
+      return (
+        stdout: utf8.decode(stdoutBytes, allowMalformed: true),
+        stderr: utf8.decode(stderrBytes, allowMalformed: true),
+        exitCode: session.exitCode,
+      );
+    } on TimeoutException {
+      session.kill(SSHSignal.KILL);
+      session.close();
+      throw TimeoutException('SSH command timed out', timeout);
+    } finally {
+      await stdoutSub.cancel();
+      await stderrSub.cancel();
+    }
   }
 
   Future<bool> executeSuccess(

@@ -22,6 +22,7 @@ import '../../models/workspace_tab.dart';
 import '../../services/snippet_repository.dart';
 import '../../services/workspace_repository.dart';
 import '../../services/workspace_manager.dart';
+import '../../services/tmux_startup.dart';
 import '../../utils/command_history.dart';
 import '../../utils/route_transition.dart';
 import '../../utils/speech_dictation.dart';
@@ -30,8 +31,6 @@ import '../../utils/open_workspace.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/session_name_dialog.dart';
 import '../../widgets/tmux_missing_dialog.dart';
-import '../../widgets/aitty_config_dialog.dart';
-import '../../widgets/workspace_name_dialog.dart';
 import 'browser_tab.dart';
 import 'command_editor_sheet.dart';
 import 'files_tab.dart';
@@ -659,6 +658,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                 Navigator.pop(ctx, _PaneOverflowAction.rename);
               }),
             if (pane.useTmux)
+              _AddTabTile(Icons.close, ObsidianColors.primary, 'Close tab', () {
+                Navigator.pop(ctx, _PaneOverflowAction.close);
+              }),
+            if (pane.useTmux)
               _AddTabTile(Icons.stop_circle_outlined, ObsidianColors.error, 'End tmux session', () {
                 Navigator.pop(ctx, _PaneOverflowAction.end);
               }),
@@ -712,9 +715,18 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           ),
         );
         if (confirmed != true || !mounted) return;
-        await _workspaceManager.endPaneSession(widget.workspaceId, pane.id);
+        try {
+          await _workspaceManager.endPaneSession(widget.workspaceId, pane.id);
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+          }
+          return;
+        }
         if (!mounted) return;
         if (_workspace == null) _exitWorkspace();
+      case _PaneOverflowAction.close:
+        _closeTerminalTab(pane);
     }
   }
 
@@ -837,6 +849,26 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   Future<void> _addTerminal(Workspace workspace) async {
     final host = await ref.read(hostRepositoryProvider).getHost(workspace.hostId);
     if (host == null || !mounted) return;
+
+    List<({String name, String? cwd})> existingSessions = [];
+    final connection = workspace.connection;
+    final allSessions = await TmuxStartup.listRemoteSessions(connection);
+    final pwd = workspace.activeTerminal?.cwd ?? (workspace.terminals.isNotEmpty ? workspace.terminals.first.cwd : null);
+    if (pwd != null) {
+      final normalizedPwd = pwd.endsWith('/') ? pwd.substring(0, pwd.length - 1) : pwd;
+      existingSessions = allSessions.where((s) {
+        if (s.cwd == null) return false;
+        final normalizedCwd = s.cwd!.endsWith('/') ? s.cwd!.substring(0, s.cwd!.length - 1) : s.cwd!;
+        if (normalizedPwd == '~') return true;
+        return normalizedCwd == normalizedPwd || normalizedCwd.startsWith('$normalizedPwd/');
+      }).toList();
+    }
+    if (existingSessions.isEmpty) {
+      existingSessions = allSessions;
+    }
+
+    if (!mounted) return;
+
     final choice = await SessionNameDialog.show(
       context,
       title: 'New terminal',
@@ -844,6 +876,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
             host,
             paneIndex: workspace.terminals.length,
           ),
+      existingSessions: existingSessions,
     );
     if (choice == null || !mounted) return;
 
@@ -1210,17 +1243,22 @@ class _WorkspaceTabBar extends StatelessWidget {
                                 color: active ? ObsidianColors.primary : ObsidianColors.onSurfaceVariant,
                               ),
                             ),
-                            if (active) ...[
+                             if (active) ...[
                               if (isTerminal && workspace.terminals[index].useTmux) ...[
-                                const SizedBox(width: 4),
+                                const SizedBox(width: 2),
                                 GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
                                   onTap: () => onPaneOverflow(workspace.terminals[index]),
-                                  child: const Icon(Icons.more_vert, size: 14, color: ObsidianColors.outline),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    child: Icon(Icons.more_vert, size: 16, color: ObsidianColors.outline),
+                                  ),
                                 ),
                               ],
-                              if (_totalTabs > 1) ...[
-                                const SizedBox(width: 4),
+                              if (_totalTabs > 1 && !(isTerminal && workspace.terminals[index].useTmux)) ...[
+                                const SizedBox(width: 2),
                                 GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
                                   onTap: () {
                                     if (isTerminal) {
                                       onCloseTerminal(workspace.terminals[index]);
@@ -1228,7 +1266,10 @@ class _WorkspaceTabBar extends StatelessWidget {
                                       onCloseAux(index - workspace.terminals.length);
                                     }
                                   },
-                                  child: const Icon(Icons.close, size: 14, color: ObsidianColors.outline),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    child: Icon(Icons.close, size: 16, color: ObsidianColors.outline),
+                                  ),
                                 ),
                               ],
                             ],
@@ -1461,7 +1502,7 @@ class _ImagePreviewStrip extends StatelessWidget {
 
 enum _AddTabAction { terminal, files, browser, git, rename, template }
 
-enum _PaneOverflowAction { rename, end }
+enum _PaneOverflowAction { rename, end, close }
 
 class _AddTabTile extends StatelessWidget {
   const _AddTabTile(this.icon, this.color, this.label, this.onTap);
@@ -1551,68 +1592,45 @@ class _HostSessionHubState extends ConsumerState<_HostSessionHub> {
       final aittyConfig = await manager.tryLoadAittyConfig(widget.workspace.connection, sessionCwd);
       setState(() => _attaching = false);
 
-      if (aittyConfig != null && aittyConfig.workspaces.isNotEmpty) {
+      if (aittyConfig != null) {
         if (!mounted) return;
-        final result = await AittyConfigDialog.show(
-          context,
-          path: sessionCwd,
+        if (mounted) setState(() => _attaching = true);
+        final workspace = await manager.restoreFromAitty(
+          host: host,
           config: aittyConfig,
+          workspacePath: sessionCwd,
+          existing: widget.workspace.connection,
         );
-        if (result == null || result.choice == AittyConfigChoice.cancel) return;
-        if (result.choice == AittyConfigChoice.openWorkspace) {
-          final wsConfig = result.workspaceConfig!;
-          if (mounted) setState(() => _attaching = true);
-          final workspace = await manager.restoreFromAitty(
-            host: host,
-            config: wsConfig,
-            workspacePath: sessionCwd,
-            existing: widget.workspace.connection,
+        
+        int targetIdx = workspace.terminals.indexWhere(
+          (t) => t.useTmux && t.tmuxSessionName == session.name
+        );
+        
+        if (targetIdx != -1) {
+          workspace.activeTabIndex = targetIdx;
+        } else {
+          final pane = await manager.addTerminal(
+            workspace.id,
+            cwd: sessionCwd,
+            tmuxSessionName: session.name,
+            useTmux: true,
+            resumeOnly: true,
+            checkExistingSession: false,
           );
-          
-          int targetIdx = workspace.terminals.indexWhere(
-            (t) => t.useTmux && t.tmuxSessionName == session.name
-          );
-          
+          targetIdx = workspace.terminals.indexWhere((t) => t.id == pane.id);
           if (targetIdx != -1) {
             workspace.activeTabIndex = targetIdx;
-          } else {
-            final pane = await manager.addTerminal(
-              workspace.id,
-              cwd: sessionCwd,
-              tmuxSessionName: session.name,
-              useTmux: true,
-              resumeOnly: true,
-              checkExistingSession: false,
-            );
-            targetIdx = workspace.terminals.indexWhere((t) => t.id == pane.id);
-            if (targetIdx != -1) {
-              workspace.activeTabIndex = targetIdx;
-            }
           }
-
-          if (mounted) {
-            manager.removeWorkspacePlaceholder(widget.workspaceId);
-            openWorkspace(context, workspace.id, replace: true);
-          }
-          return;
         }
+
+        if (mounted) {
+          manager.removeWorkspacePlaceholder(widget.workspaceId);
+          openWorkspace(context, workspace.id, replace: true);
+        }
+        return;
       }
 
-      if (!mounted) return;
-      final existingNames = await manager.getExistingWorkspaceNames(
-        widget.workspace.connection,
-        host.id,
-        sessionCwd,
-      );
-
-      if (!mounted) return;
-      final workspaceName = await WorkspaceNameDialog.show(
-        context,
-        title: 'Enter Workspace Name',
-        initialName: session.name,
-        existingNames: existingNames,
-      );
-      if (workspaceName == null || workspaceName.isEmpty) return;
+      final workspaceName = session.name;
 
       if (mounted) setState(() => _attaching = true);
       final resolved = await TmuxAvailability.resolve(
@@ -1671,66 +1689,43 @@ class _HostSessionHubState extends ConsumerState<_HostSessionHub> {
       final aittyConfig = await manager.tryLoadAittyConfig(widget.workspace.connection, cwd);
       setState(() => _attaching = false);
 
-      if (aittyConfig != null && aittyConfig.workspaces.isNotEmpty) {
+      if (aittyConfig != null) {
         if (!mounted) return;
-        final result = await AittyConfigDialog.show(
-          context,
-          path: cwd,
+        if (mounted) setState(() => _attaching = true);
+        final workspace = await manager.restoreFromAitty(
+          host: host,
           config: aittyConfig,
+          workspacePath: cwd,
+          existing: widget.workspace.connection,
         );
-        if (result == null || result.choice == AittyConfigChoice.cancel) return;
-        if (result.choice == AittyConfigChoice.openWorkspace) {
-          final wsConfig = result.workspaceConfig!;
-          if (mounted) setState(() => _attaching = true);
-          final workspace = await manager.restoreFromAitty(
-            host: host,
-            config: wsConfig,
-            workspacePath: cwd,
-            existing: widget.workspace.connection,
+        
+        int targetIdx = workspace.terminals.indexWhere(
+          (t) => !t.useTmux
+        );
+        
+        if (targetIdx != -1) {
+          workspace.activeTabIndex = targetIdx;
+        } else {
+          final pane = await manager.addTerminal(
+            workspace.id,
+            cwd: cwd,
+            useTmux: false,
+            checkExistingSession: false,
           );
-          
-          int targetIdx = workspace.terminals.indexWhere(
-            (t) => !t.useTmux
-          );
-          
+          targetIdx = workspace.terminals.indexWhere((t) => t.id == pane.id);
           if (targetIdx != -1) {
             workspace.activeTabIndex = targetIdx;
-          } else {
-            final pane = await manager.addTerminal(
-              workspace.id,
-              cwd: cwd,
-              useTmux: false,
-              checkExistingSession: false,
-            );
-            targetIdx = workspace.terminals.indexWhere((t) => t.id == pane.id);
-            if (targetIdx != -1) {
-              workspace.activeTabIndex = targetIdx;
-            }
           }
-
-          if (mounted) {
-            manager.removeWorkspacePlaceholder(widget.workspaceId);
-            openWorkspace(context, workspace.id, replace: true);
-          }
-          return;
         }
+
+        if (mounted) {
+          manager.removeWorkspacePlaceholder(widget.workspaceId);
+          openWorkspace(context, workspace.id, replace: true);
+        }
+        return;
       }
 
-      if (!mounted) return;
-      final existingNames = await manager.getExistingWorkspaceNames(
-        widget.workspace.connection,
-        host.id,
-        cwd,
-      );
-
-      if (!mounted) return;
-      final workspaceName = await WorkspaceNameDialog.show(
-        context,
-        title: 'Enter Workspace Name',
-        initialName: host.label,
-        existingNames: existingNames,
-      );
-      if (workspaceName == null || workspaceName.isEmpty) return;
+      final workspaceName = host.label;
 
       if (mounted) setState(() => _attaching = true);
       final workspace = await manager.createWorkspace(

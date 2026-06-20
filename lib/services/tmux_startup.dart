@@ -111,6 +111,25 @@ done
 
   static String _shellQuote(String value) => "'${value.replaceAll("'", "'\\''")}'";
 
+  static Future<void> runReliableCommand(SshConnection conn, String cmd) async {
+    var result = await conn.executeResult(cmd);
+    if (result.exitCode == 0) return;
+    if (result.exitCode == 1 && result.stderr.contains("can't find session")) return;
+
+    const shells = ['/bin/sh -lc', '/bin/bash -lc', '/bin/zsh -lc'];
+    for (final shell in shells) {
+      result = await conn.executeResult('$shell ${_shellQuote(cmd)}');
+      if (result.exitCode == 0) return;
+      if (result.exitCode == 1 && result.stderr.contains("can't find session")) return;
+      
+      final err = result.stderr.toLowerCase();
+      if (result.exitCode != 127 && !err.contains('command not found') && !err.contains('not found')) {
+        throw StateError(result.stderr.trim().isNotEmpty ? result.stderr.trim() : 'Unknown tmux error (code ${result.exitCode})');
+      }
+    }
+    throw StateError('tmux command failed: executable not found in PATH');
+  }
+
   static final _tmuxVersionLine = RegExp(r'^tmux\s+\d', caseSensitive: false);
 
   static bool _looksLikeTmuxPath(String line) =>

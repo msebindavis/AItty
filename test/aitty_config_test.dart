@@ -5,38 +5,36 @@ import 'package:ai_tty/models/workspace_tab.dart';
 
 void main() {
   group('AittyConfig Serialization & Deserialization Tests', () {
-    test('Deserializes new dictionary format correctly', () {
+    test('Deserializes new flat format correctly', () {
       final newJson = {
-        "New Workspace": {
-          "id": "uuid-2",
-          "terminals": [
-            {
-              "cwd": "/path/to/new",
-              "tmuxSessionName": "shell-abc",
-              "useTmux": false
-            }
-          ],
-          "auxTabs": [
-            {
-              "id": "tab-2",
-              "type": "files",
-              "title": "Files",
-              "path": "/path/to/new"
-            }
-          ]
-        }
+        "id": "uuid-2",
+        "name": "New Workspace",
+        "terminals": [
+          {
+            "cwd": "/path/to/new",
+            "tmuxSessionName": "shell-abc",
+            "useTmux": false
+          }
+        ],
+        "auxTabs": [
+          {
+            "id": "tab-2",
+            "type": "files",
+            "title": "Files",
+            "path": "/path/to/new"
+          }
+        ]
       };
 
       final config = AittyConfig.fromJson(newJson);
-      expect(config.workspaces, hasLength(1));
-      expect(config.workspaces.first.name, "New Workspace");
-      expect(config.workspaces.first.id, "uuid-2");
-      expect(config.workspaces.first.terminals.first.useTmux, false);
-      expect(config.workspaces.first.terminals.first.tmuxSessionName, "shell-abc");
+      expect(config.name, "New Workspace");
+      expect(config.id, "uuid-2");
+      expect(config.terminals.first.useTmux, false);
+      expect(config.terminals.first.tmuxSessionName, "shell-abc");
     });
 
-    test('Serializes to new dictionary format correctly', () {
-      final ws = AittyWorkspaceConfig(
+    test('Serializes to new flat format correctly', () {
+      final config = AittyConfig(
         id: "uuid-3",
         name: "Serialized Workspace",
         terminals: [
@@ -56,16 +54,11 @@ void main() {
         ],
       );
 
-      final config = AittyConfig(workspaces: [ws]);
       final jsonMap = config.toJson();
 
-      expect(jsonMap.containsKey("workspaces"), isFalse);
-      expect(jsonMap.containsKey("Serialized Workspace"), isTrue);
-      
-      final inner = jsonMap["Serialized Workspace"] as Map<String, dynamic>;
-      expect(inner["id"], "uuid-3");
-      expect(inner.containsKey("name"), isFalse); // Verify name is key, not duplicated inside
-      expect(inner["terminals"].first["useTmux"], true);
+      expect(jsonMap["id"], "uuid-3");
+      expect(jsonMap["name"], "Serialized Workspace");
+      expect(jsonMap["terminals"].first["useTmux"], true);
     });
   });
 }
