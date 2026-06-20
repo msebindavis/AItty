@@ -960,21 +960,35 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
   void _triggerScrolly() {
     if (!widget.isTmux) return; // Not tmux
     if (!_showScrolly) {
-      // Send standard tmux prefix (Ctrl+B) then '[' to enter copy mode
-      widget.onSendBytes(Uint8List.fromList([0x02, 0x5b])); 
+      // Send standard tmux prefix (Ctrl+B) then '[' to enter copy mode, 
+      // immediately followed by Ctrl+Up to jump to [1/...] instantly
+      final enterCopyMode = <int>[0x02, 0x5b];
+      final ctrlUp = TerminalInput.ctrlArrow(TerminalArrowDirection.up);
+      widget.onSendBytes(Uint8List.fromList([...enterCopyMode, ...ctrlUp])); 
+      
       if (mounted) setState(() => _showScrolly = true);
     }
   }
 
-  void _handleScroll(PointerScrollEvent event) {
+  void _checkAndExitCopyModeIfAtBottom() {
     if (!widget.isTmux) return;
-    if (event.scrollDelta.dy == 0) return;
+    
+    // Tmux copy mode displays the current line index at the top right, e.g. "[0/1990]"
+    final topText = widget.terminal.buffer.lines[0].getText().trimRight();
+    if (RegExp(r'\[0/\d+\]$').hasMatch(topText)) {
+      widget.onSendBytes(Uint8List.fromList([113])); // 'q' to exit copy mode
+    }
+  }
+
+  void _handleScroll(double deltaY) {
+    if (!widget.isTmux) return;
+    if (deltaY == 0) return;
 
     if (!_showScrolly) {
       _triggerScrolly();
     }
 
-    _scrollAccumulator += event.scrollDelta.dy;
+    _scrollAccumulator += deltaY;
     
     // Roughly 20 pixels of scroll delta per line
     const double lineThreshold = 20.0;
@@ -1054,13 +1068,12 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
     return Listener(
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
-          _handleScroll(event);
+          _handleScroll(event.scrollDelta.dy);
         }
       },
       onPointerMove: (event) {
-        if (event.delta.dy.abs() > 2) {
-          _triggerScrolly();
-        }
+        // Touch drag moves in the opposite coordinate direction to mouse scroll
+        _handleScroll(-event.delta.dy);
       },
       child: RepaintBoundary(
         child: Stack(
@@ -1093,7 +1106,10 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
                 top: 16,
                 right: 16,
                 child: Scrolly(
-                  onHide: () => setState(() => _showScrolly = false),
+                  onHide: () {
+                    setState(() => _showScrolly = false);
+                    _checkAndExitCopyModeIfAtBottom();
+                  },
                   onLineUp: () => widget.onSendBytes(TerminalInput.ctrlArrow(TerminalArrowDirection.up)),
                   onLineDown: () => widget.onSendBytes(TerminalInput.ctrlArrow(TerminalArrowDirection.down)),
                   onPageUp: () => widget.onSendBytes(TerminalInput.pageUp()),
