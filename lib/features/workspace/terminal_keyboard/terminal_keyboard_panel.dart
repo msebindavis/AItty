@@ -29,7 +29,7 @@ class TerminalKeyboardPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        color: ObsidianColors.surfaceContainerLowest,
+        color: Colors.transparent,
         border: Border(top: BorderSide(color: ObsidianColors.outlineVariant, width: 0.5)),
       ),
       padding: const EdgeInsets.fromLTRB(AppSpacing.sm, AppSpacing.sm, AppSpacing.sm, AppSpacing.sm),

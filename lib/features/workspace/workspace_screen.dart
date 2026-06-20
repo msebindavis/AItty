@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -38,6 +39,7 @@ import 'terminal_keyboard/terminal_gesture_layer.dart';
 import 'terminal_keyboard/terminal_key_catalog.dart';
 import 'terminal_keyboard/terminal_keyboard_panel.dart';
 import 'terminal_theme.dart';
+import 'scrolly.dart';
 
 class WorkspaceScreen extends ConsumerStatefulWidget {
   const WorkspaceScreen({super.key, required this.workspaceId});
@@ -580,11 +582,13 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         controller: pane.controller,
         fontScale: _terminalFontScale,
         isActive: isActive,
-        simulateScroll: !pane.useTmux,
+        isTmux: pane.useTmux,
+        simulateScroll: true, // Always true to prevent xterm from sending arrow keys to bash
         terminalViewKey: isActive ? _terminalViewKey : null,
         terminalFocusNode: isActive ? _terminalFocusNode : null,
         onGestureArrow: _sendArrow,
         onGestureTab: () => _sendTerminalBytes(TerminalInput.tab()),
+        onSendBytes: _sendTerminalBytes,
         onFontScaleChanged: (scale) => setState(() => _terminalFontScale = scale),
       );
     }
@@ -901,11 +905,13 @@ class _SessionTerminalPanel extends StatefulWidget {
     required this.controller,
     required this.fontScale,
     required this.isActive,
+    required this.isTmux,
     required this.simulateScroll,
     required this.terminalViewKey,
     required this.terminalFocusNode,
     required this.onGestureArrow,
     required this.onGestureTab,
+    required this.onSendBytes,
     required this.onFontScaleChanged,
   });
 
@@ -913,11 +919,13 @@ class _SessionTerminalPanel extends StatefulWidget {
   final TerminalController controller;
   final double fontScale;
   final bool isActive;
+  final bool isTmux;
   final bool simulateScroll;
   final GlobalKey<TerminalViewState>? terminalViewKey;
   final FocusNode? terminalFocusNode;
   final ValueChanged<TerminalArrowDirection> onGestureArrow;
   final VoidCallback onGestureTab;
+  final ValueChanged<Uint8List> onSendBytes;
   final ValueChanged<double> onFontScaleChanged;
 
   @override
@@ -943,6 +951,42 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_onControllerChanged);
       widget.controller.addListener(_onControllerChanged);
+    }
+  }
+
+  bool _showScrolly = false;
+  double _scrollAccumulator = 0.0;
+  
+  void _triggerScrolly() {
+    if (!widget.isTmux) return; // Not tmux
+    if (!_showScrolly) {
+      // Send standard tmux prefix (Ctrl+B) then '[' to enter copy mode
+      widget.onSendBytes(Uint8List.fromList([0x02, 0x5b])); 
+      if (mounted) setState(() => _showScrolly = true);
+    }
+  }
+
+  void _handleScroll(PointerScrollEvent event) {
+    if (!widget.isTmux) return;
+    if (event.scrollDelta.dy == 0) return;
+
+    if (!_showScrolly) {
+      _triggerScrolly();
+    }
+
+    _scrollAccumulator += event.scrollDelta.dy;
+    
+    // Roughly 20 pixels of scroll delta per line
+    const double lineThreshold = 20.0;
+    
+    while (_scrollAccumulator <= -lineThreshold) {
+      widget.onSendBytes(TerminalInput.ctrlArrow(TerminalArrowDirection.up));
+      _scrollAccumulator += lineThreshold;
+    }
+    
+    while (_scrollAccumulator >= lineThreshold) {
+      widget.onSendBytes(TerminalInput.ctrlArrow(TerminalArrowDirection.down));
+      _scrollAccumulator -= lineThreshold;
     }
   }
 
@@ -1007,33 +1051,70 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
       onSecondaryTapDown: (_, _) {},
       onSecondaryTapUp: (details, _) => _showCopyMenu(details),
     );
-    return RepaintBoundary(
-      child: Stack(
-        children: [
-          TerminalGestureLayer(
-            enabled: true,
-            fontScale: widget.fontScale,
-            onArrow: widget.onGestureArrow,
-            onTab: widget.onGestureTab,
-            onFontScaleChanged: widget.onFontScaleChanged,
-            child: terminalBody,
-          ),
-          if (hasSelection)
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Material(
-                elevation: 2,
-                borderRadius: BorderRadius.circular(4),
-                color: hostTerminalTheme.background.withValues(alpha: 0.92),
-                child: IconButton(
-                  icon: Icon(Icons.copy, size: 18, color: hostTerminalTheme.foreground),
-                  tooltip: 'Copy',
-                  onPressed: _copySelection,
+    return Listener(
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          _handleScroll(event);
+        }
+      },
+      onPointerMove: (event) {
+        if (event.delta.dy.abs() > 2) {
+          _triggerScrolly();
+        }
+      },
+      child: RepaintBoundary(
+        child: Stack(
+          children: [
+            TerminalGestureLayer(
+              enabled: true,
+              fontScale: widget.fontScale,
+              onArrow: widget.onGestureArrow,
+              onTab: widget.onGestureTab,
+              onFontScaleChanged: widget.onFontScaleChanged,
+              child: terminalBody,
+            ),
+            if (hasSelection)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Material(
+                  elevation: 2,
+                  borderRadius: BorderRadius.circular(4),
+                  color: hostTerminalTheme.background.withValues(alpha: 0.92),
+                  child: IconButton(
+                    icon: Icon(Icons.copy, size: 18, color: hostTerminalTheme.foreground),
+                    tooltip: 'Copy',
+                    onPressed: _copySelection,
+                  ),
                 ),
               ),
-            ),
-        ],
+            if (_showScrolly)
+              Positioned(
+                top: 16,
+                right: 16,
+                child: Scrolly(
+                  onHide: () => setState(() => _showScrolly = false),
+                  onLineUp: () => widget.onSendBytes(TerminalInput.ctrlArrow(TerminalArrowDirection.up)),
+                  onLineDown: () => widget.onSendBytes(TerminalInput.ctrlArrow(TerminalArrowDirection.down)),
+                  onPageUp: () => widget.onSendBytes(TerminalInput.pageUp()),
+                  onPageDown: () => widget.onSendBytes(TerminalInput.pageDown()),
+                  onTop: () => widget.onSendBytes(TerminalInput.alt('<')),
+                  onLive: () => widget.onSendBytes(TerminalInput.alt('>')),
+                  onDone: () {
+                    widget.onSendBytes(Uint8List.fromList([113])); // 'q'
+                    if (mounted) setState(() => _showScrolly = false);
+                  },
+                  onThumbDrag: (deltaY) {
+                    if (deltaY < -2) {
+                      widget.onSendBytes(TerminalInput.ctrlArrow(TerminalArrowDirection.up));
+                    } else if (deltaY > 2) {
+                      widget.onSendBytes(TerminalInput.ctrlArrow(TerminalArrowDirection.down));
+                    }
+                  },
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1189,7 +1270,7 @@ class _CommandInputBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
       decoration: const BoxDecoration(
-        color: ObsidianColors.surfaceContainerLow,
+        color: Colors.transparent,
         border: Border(top: BorderSide(color: ObsidianColors.outlineVariant, width: 0.5)),
       ),
       child: Row(
