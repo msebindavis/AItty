@@ -33,7 +33,6 @@ class _SessionLifecycleScopeState extends ConsumerState<SessionLifecycleScope> w
 
     final manager = ref.read(workspaceManagerProvider);
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      manager.saveAllBookmarks();
       return;
     }
 

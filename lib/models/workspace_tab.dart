@@ -32,4 +32,25 @@ class WorkspaceTab {
       remotePort: remotePort ?? this.remotePort,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type.name,
+        'title': title,
+        if (path != null) 'path': path,
+        if (url != null) 'url': url,
+        'remotePort': remotePort,
+      };
+
+  factory WorkspaceTab.fromJson(Map<String, dynamic> json) => WorkspaceTab(
+        id: json['id'] as String,
+        type: WorkspaceTabType.values.firstWhere(
+          (e) => e.name == json['type'],
+          orElse: () => WorkspaceTabType.terminal,
+        ),
+        title: json['title'] as String,
+        path: json['path'] as String?,
+        url: json['url'] as String?,
+        remotePort: json['remotePort'] as int? ?? 3000,
+      );
 }

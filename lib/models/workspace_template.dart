@@ -2,22 +2,26 @@ class WorkspaceTemplateEntry {
   const WorkspaceTemplateEntry({
     required this.cwd,
     required this.tmuxSessionName,
+    this.useTmux = true,
     this.label,
   });
 
   final String cwd;
   final String tmuxSessionName;
+  final bool useTmux;
   final String? label;
 
   Map<String, dynamic> toJson() => {
         'cwd': cwd,
         'tmuxSessionName': tmuxSessionName,
+        'useTmux': useTmux,
         if (label != null) 'label': label,
       };
 
   factory WorkspaceTemplateEntry.fromJson(Map<String, dynamic> json) => WorkspaceTemplateEntry(
         cwd: json['cwd'] as String,
         tmuxSessionName: json['tmuxSessionName'] as String,
+        useTmux: json['useTmux'] as bool? ?? true,
         label: json['label'] as String?,
       );
 }

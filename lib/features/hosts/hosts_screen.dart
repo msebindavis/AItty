@@ -7,6 +7,7 @@ import '../../core/theme/app_typography.dart';
 import '../../core/theme/obsidian_colors.dart';
 import '../../models/host.dart';
 import '../../providers/hosts_provider.dart';
+import '../../utils/connect_host.dart';
 import '../../widgets/host_list_tile.dart';
 import '../../widgets/section_header.dart';
 
@@ -89,7 +90,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                       child: HostListTile(
                         host: host,
-                        onTap: () => context.push('/sessions/new/path?host=${host.id}'),
+                        onTap: () => connectHostAndOpen(context, ref, host),
                         onMenu: () => _showHostMenu(host),
                       ),
                     ),
@@ -128,7 +129,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
               title: const Text('Connect'),
               onTap: () {
                 Navigator.pop(ctx);
-                context.push('/sessions/new/path?host=${host.id}');
+                connectHostAndOpen(context, ref, host);
               },
             ),
             ListTile(

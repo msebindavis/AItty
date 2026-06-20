@@ -39,7 +39,7 @@ class TerminalView extends StatefulWidget {
     this.onSecondaryTapDown,
     this.onSecondaryTapUp,
     this.mouseCursor = SystemMouseCursors.text,
-    this.keyboardType = TextInputType.emailAddress,
+    this.keyboardType = TextInputType.text,
     this.keyboardAppearance = Brightness.dark,
     this.cursorType = TerminalCursorType.block,
     this.alwaysShowCursor = false,
@@ -330,6 +330,21 @@ class TerminalViewState extends State<TerminalView> {
   void closeKeyboard() {
     _customTextEditKey.currentState?.closeKeyboard();
   }
+
+  void focusForInput({bool showSoftKeyboard = true}) {
+    if (widget.hardwareKeyboardOnly || !showSoftKeyboard) {
+      _focusNode.requestFocus();
+      return;
+    }
+    requestKeyboard();
+  }
+
+  void dismissInput() {
+    closeKeyboard();
+    _focusNode.unfocus();
+  }
+
+  bool get hasTerminalFocus => _focusNode.hasFocus;
 
   Rect get cursorRect {
     return renderTerminal.cursorOffset & renderTerminal.cellSize;

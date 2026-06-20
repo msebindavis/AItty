@@ -56,7 +56,7 @@ class SshConnection {
     Duration? keepAliveInterval,
     Duration timeout = const Duration(seconds: 20),
   }) async {
-    final socket = await SSHSocket.connect(
+    final socket = await _connectTcpSocket(
       host.hostname,
       host.port,
       timeout: timeout,
@@ -133,14 +133,18 @@ class SshConnection {
     String channelId, {
     required void Function(String chunk) onStdout,
     void Function(String chunk)? onStderr,
+    VoidCallback? onDone,
   }) {
     final channel = _channel(channelId);
     if (channel == null) return;
     channel.stdoutSub?.cancel();
     channel.stderrSub?.cancel();
-    channel.stdoutSub = channel.session.stdout.listen((data) {
-      onStdout(utf8.decode(data, allowMalformed: true));
-    });
+    channel.stdoutSub = channel.session.stdout.listen(
+      (data) {
+        onStdout(utf8.decode(data, allowMalformed: true));
+      },
+      onDone: onDone,
+    );
     channel.stderrSub = channel.session.stderr.listen((data) {
       onStderr?.call(utf8.decode(data, allowMalformed: true));
     });
@@ -170,13 +174,7 @@ class SshConnection {
 
   /// Drop the cached SFTP client so a new exec channel can open reliably.
   Future<void> prepareForExec() async {
-    final client = _sftp;
-    _sftp = null;
-    if (client != null) {
-      try {
-        client.close();
-      } catch (_) {}
-    }
+    // No-op: previously closed SFTP client, which broke the Files tab.
   }
 
   Future<List<RemoteFileEntry>> listDirectory(String path) async {
@@ -216,6 +214,35 @@ class SshConnection {
     }
   }
 
+  /// Reads remote file text for preview. Rejects binary/large files.
+  Future<String> readFileText(String path, {int maxBytes = 512 * 1024}) async {
+    final client = await sftp();
+    final attrs = await client.stat(path);
+    final size = attrs.size;
+    if (size != null && size > maxBytes) {
+      throw StateError('File too large to preview (${(size / 1024).round()} KB)');
+    }
+
+    final file = await client.open(path, mode: SftpFileOpenMode.read);
+    try {
+      final bytes = await file.readBytes(length: maxBytes);
+      if (bytes.length >= maxBytes) {
+        throw StateError('File too large to preview');
+      }
+      _ensureTextPreview(bytes);
+      return utf8.decode(bytes, allowMalformed: true);
+    } finally {
+      await file.close();
+    }
+  }
+
+  void _ensureTextPreview(Uint8List bytes) {
+    final sample = bytes.length > 8192 ? bytes.sublist(0, 8192) : bytes;
+    if (sample.contains(0)) {
+      throw StateError('Binary files cannot be previewed');
+    }
+  }
+
   RemoteFileEntry _mapSftpName(SftpName name) {
     final parts = name.longname.split(RegExp(r'\s+'));
     final perm = parts.isNotEmpty ? parts.first : '----------';
@@ -233,15 +260,44 @@ class SshConnection {
   }) async {
     if (!isConnected) throw SSHStateError('Transport is closed');
 
-    final result = await _client
-        .runWithResult(command, stderr: true)
-        .timeout(timeout, onTimeout: () => throw TimeoutException('SSH command timed out', timeout));
-
-    return (
-      stdout: utf8.decode(result.stdout, allowMalformed: true),
-      stderr: utf8.decode(result.stderr, allowMalformed: true),
-      exitCode: result.exitCode,
+    final session = await _client.execute(command);
+    
+    final stdoutBytes = <int>[];
+    final stderrBytes = <int>[];
+    
+    final stdoutDone = Completer<void>();
+    final stderrDone = Completer<void>();
+    
+    final stdoutSub = session.stdout.listen(
+      stdoutBytes.addAll,
+      onDone: stdoutDone.complete,
+      onError: stdoutDone.completeError,
     );
+    final stderrSub = session.stderr.listen(
+      stderrBytes.addAll,
+      onDone: stderrDone.complete,
+      onError: stderrDone.completeError,
+    );
+    
+    try {
+      await Future.wait([
+        stdoutDone.future,
+        stderrDone.future,
+        session.done,
+      ]).timeout(timeout);
+      return (
+        stdout: utf8.decode(stdoutBytes, allowMalformed: true),
+        stderr: utf8.decode(stderrBytes, allowMalformed: true),
+        exitCode: session.exitCode,
+      );
+    } on TimeoutException {
+      session.kill(SSHSignal.KILL);
+      session.close();
+      throw TimeoutException('SSH command timed out', timeout);
+    } finally {
+      await stdoutSub.cancel();
+      await stderrSub.cancel();
+    }
   }
 
   Future<bool> executeSuccess(
@@ -270,6 +326,11 @@ class SshConnection {
     return forward;
   }
 
+  Future<void> closeForward(LocalPortForward forward) async {
+    _forwards.remove(forward);
+    await forward.close();
+  }
+
   Future<void> disconnect() async {
     _disconnected = true;
     for (final id in _shells.keys.toList()) {
@@ -282,4 +343,63 @@ class SshConnection {
     _client.close();
     await _client.done;
   }
+}
+
+class _IoSshSocket implements SSHSocket {
+  _IoSshSocket(this._socket);
+
+  final Socket _socket;
+
+  @override
+  Stream<Uint8List> get stream => _socket;
+
+  @override
+  StreamSink<List<int>> get sink => _socket;
+
+  @override
+  Future<void> close() => _socket.close();
+
+  @override
+  Future<void> get done => _socket.done;
+
+  @override
+  void destroy() => _socket.destroy();
+}
+
+/// Prefer IPv4 when both stacks resolve — avoids "No route to host" on IPv4-only networks.
+Future<SSHSocket> _connectTcpSocket(
+  String host,
+  int port, {
+  Duration? timeout,
+}) async {
+  final trimmed = host.trim();
+  final literal = InternetAddress.tryParse(trimmed);
+  final addresses = literal != null
+      ? [literal]
+      : await InternetAddress.lookup(trimmed);
+
+  if (addresses.isEmpty) {
+    throw SocketException('Failed host lookup: $trimmed');
+  }
+
+  final ordered = List<InternetAddress>.from(addresses)
+    ..sort((a, b) {
+      final a4 = a.type == InternetAddressType.IPv4;
+      final b4 = b.type == InternetAddressType.IPv4;
+      if (a4 == b4) return 0;
+      return a4 ? -1 : 1;
+    });
+
+  Object? lastError;
+  for (final address in ordered) {
+    try {
+      final socket = await Socket.connect(address, port, timeout: timeout);
+      return _IoSshSocket(socket);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  if (lastError != null) throw lastError;
+  throw SocketException('Could not connect to $trimmed:$port');
 }

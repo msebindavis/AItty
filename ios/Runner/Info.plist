@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Select images to attach to terminal commands.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Dictate commands and prompts into the terminal input bar.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Transcribe spoken commands into text you can review before sending.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Forward ports to preview web apps on your VPS.</string>
 	<key>UIApplicationSceneManifest</key>

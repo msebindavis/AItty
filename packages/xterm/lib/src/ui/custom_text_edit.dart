@@ -165,7 +165,7 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
         keyboardAppearance: widget.keyboardAppearance,
         autocorrect: false,
         enableSuggestions: false,
-        enableIMEPersonalizedLearning: false,
+        enableIMEPersonalizedLearning: true,
       );
 
       _connection = TextInput.attach(this, config);

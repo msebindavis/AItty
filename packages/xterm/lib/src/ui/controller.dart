@@ -107,6 +107,7 @@ class TerminalController with ChangeNotifier {
 
   // Toggle sending pointer events to the terminal.
   void setSuspendPointerInput(bool suspend) {
+    if (_suspendPointerInputs == suspend) return;
     _suspendPointerInputs = suspend;
     notifyListeners();
   }
