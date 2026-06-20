@@ -41,6 +41,7 @@ import 'terminal_keyboard/terminal_key_catalog.dart';
 import 'terminal_keyboard/terminal_keyboard_panel.dart';
 import 'terminal_theme.dart';
 import 'scrolly.dart';
+import 'terminal_selection_overlay.dart';
 
 class WorkspaceScreen extends ConsumerStatefulWidget {
   const WorkspaceScreen({super.key, required this.workspaceId});
@@ -67,6 +68,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   final _speechDictation = SpeechDictation();
   String _dictationPrefix = '';
   bool _dictationListening = false;
+  bool _forceSoftKeyboard = false;
   double _terminalFontScale = 1;
   List<TerminalSnippet> _snippets = const [];
   late final WorkspaceManager _workspaceManager;
@@ -352,10 +354,14 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         _openExtendedKeyboard();
         return;
       case TerminalKeyAction.hideKeyboard:
-        if (_terminalInputActive) {
+        if (_forceSoftKeyboard && _terminalInputActive) {
+          setState(() => _forceSoftKeyboard = false);
           _dismissTerminalInput();
         } else {
-          _focusTerminal(showSoftKeyboard: _useTerminalSoftKeyboard);
+          setState(() => _forceSoftKeyboard = true);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _focusTerminal(showSoftKeyboard: _useTerminalSoftKeyboard);
+          });
         }
         return;
       case TerminalKeyAction.toggleCtrl:
@@ -542,7 +548,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
               TerminalKeyboardPanel(
                 ctrlActive: _ctrl,
                 altActive: _alt,
-                keyboardActive: _terminalInputActive,
+                keyboardActive: _terminalInputActive && _forceSoftKeyboard,
                 onKeyAction: _handleTerminalKeyAction,
                 onArrow: _sendArrow,
               ),
@@ -587,6 +593,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         simulateScroll: true, // Always true to prevent xterm from sending arrow keys to bash
         terminalViewKey: isActive ? _terminalViewKey : null,
         terminalFocusNode: isActive ? _terminalFocusNode : null,
+        forceSoftKeyboard: _forceSoftKeyboard,
         onGestureArrow: _sendArrow,
         onGestureTab: () => _sendTerminalBytes(TerminalInput.tab()),
         onSendBytes: _sendTerminalBytes,
@@ -944,6 +951,7 @@ class _SessionTerminalPanel extends StatefulWidget {
     required this.simulateScroll,
     required this.terminalViewKey,
     required this.terminalFocusNode,
+    required this.forceSoftKeyboard,
     required this.onGestureArrow,
     required this.onGestureTab,
     required this.onSendBytes,
@@ -958,6 +966,7 @@ class _SessionTerminalPanel extends StatefulWidget {
   final bool simulateScroll;
   final GlobalKey<TerminalViewState>? terminalViewKey;
   final FocusNode? terminalFocusNode;
+  final bool forceSoftKeyboard;
   final ValueChanged<TerminalArrowDirection> onGestureArrow;
   final VoidCallback onGestureTab;
   final ValueChanged<Uint8List> onSendBytes;
@@ -968,6 +977,8 @@ class _SessionTerminalPanel extends StatefulWidget {
 }
 
 class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
+  bool _isDraggingSelection = false;
+
   @override
   void initState() {
     super.initState();
@@ -1016,6 +1027,7 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
   }
 
   void _handleScroll(double deltaY) {
+    if (_isDraggingSelection) return;
     if (!widget.isTmux) return;
     if (deltaY == 0) return;
 
@@ -1093,7 +1105,7 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
       theme: hostTerminalTheme,
       textStyle: terminalStyle,
       autofocus: widget.isActive,
-      hardwareKeyboardOnly: !mobile,
+      hardwareKeyboardOnly: !mobile || !widget.forceSoftKeyboard,
       keyboardType: TextInputType.text,
       deleteDetection: mobile,
       simulateScroll: widget.simulateScroll,
@@ -1113,14 +1125,39 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
       child: RepaintBoundary(
         child: Stack(
           children: [
-            TerminalGestureLayer(
-              enabled: true,
-              fontScale: widget.fontScale,
-              onArrow: widget.onGestureArrow,
-              onTab: widget.onGestureTab,
-              onFontScaleChanged: widget.onFontScaleChanged,
-              child: terminalBody,
-            ),
+            widget.terminalViewKey != null
+                ? TerminalSelectionOverlay(
+                    terminalViewKey: widget.terminalViewKey!,
+                    controller: widget.controller,
+                    onDragStart: () => setState(() => _isDraggingSelection = true),
+                    onDragEnd: () => setState(() => _isDraggingSelection = false),
+                    child: TerminalGestureLayer(
+                      enabled: true,
+                      fontScale: widget.fontScale,
+                      onArrow: widget.onGestureArrow,
+                      onTab: widget.onGestureTab,
+                      onFontScaleChanged: widget.onFontScaleChanged,
+                      onSelectWord: (pos) => widget.terminalViewKey?.currentState?.renderTerminal.selectWord(pos),
+                      onClearSelection: () => widget.controller.clearSelection(),
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 8.0),
+                        child: terminalBody,
+                      ),
+                    ),
+                  )
+                : TerminalGestureLayer(
+                    enabled: true,
+                    fontScale: widget.fontScale,
+                    onArrow: widget.onGestureArrow,
+                    onTab: widget.onGestureTab,
+                    onFontScaleChanged: widget.onFontScaleChanged,
+                    onSelectWord: (pos) => widget.terminalViewKey?.currentState?.renderTerminal.selectWord(pos),
+                    onClearSelection: () => widget.controller.clearSelection(),
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: terminalBody,
+                    ),
+                  ),
             if (hasSelection)
               Positioned(
                 top: 8,
@@ -1329,7 +1366,7 @@ class _CommandInputBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
       decoration: const BoxDecoration(
-        color: Colors.transparent,
+        color: ObsidianColors.surfaceContainer,
         border: Border(top: BorderSide(color: ObsidianColors.outlineVariant, width: 0.5)),
       ),
       child: Row(

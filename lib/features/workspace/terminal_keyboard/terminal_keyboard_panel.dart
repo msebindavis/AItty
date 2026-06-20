@@ -29,10 +29,9 @@ class TerminalKeyboardPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.transparent,
-        border: Border(top: BorderSide(color: ObsidianColors.outlineVariant, width: 0.5)),
+        color: ObsidianColors.surfaceContainer,
       ),
-      padding: const EdgeInsets.fromLTRB(AppSpacing.sm, AppSpacing.sm, AppSpacing.sm, AppSpacing.sm),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.sm, 0, AppSpacing.sm, AppSpacing.sm),
       child: _ModifierStrip(
         ctrlActive: ctrlActive,
         altActive: altActive,

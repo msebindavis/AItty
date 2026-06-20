@@ -15,6 +15,8 @@ class TerminalGestureLayer extends StatefulWidget {
     required this.onTab,
     required this.onFontScaleChanged,
     required this.fontScale,
+    this.onSelectWord,
+    this.onClearSelection,
   });
 
   final Widget child;
@@ -23,6 +25,8 @@ class TerminalGestureLayer extends StatefulWidget {
   final VoidCallback onTab;
   final ValueChanged<double> onFontScaleChanged;
   final double fontScale;
+  final void Function(Offset)? onSelectWord;
+  final VoidCallback? onClearSelection;
 
   @override
   State<TerminalGestureLayer> createState() => _TerminalGestureLayerState();
@@ -66,6 +70,10 @@ class _TerminalGestureLayerState extends State<TerminalGestureLayer> {
     final delta = localPosition - origin;
     if (delta.distance < 16) return;
 
+    if (_dragDirection == null) {
+      widget.onClearSelection?.call();
+    }
+
     final angle = math.atan2(delta.dy, delta.dx);
     final direction = _directionFromAngle(angle);
     if (direction == null) return;
@@ -103,6 +111,7 @@ class _TerminalGestureLayerState extends State<TerminalGestureLayer> {
         _dragOrigin = details.localPosition;
         _speedGear = 0;
         _dragDirection = null;
+        widget.onSelectWord?.call(details.localPosition);
       },
       onLongPressMoveUpdate: (details) => _updateDrag(details.localPosition),
       onLongPressEnd: (_) {
