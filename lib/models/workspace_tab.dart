@@ -8,6 +8,7 @@ class WorkspaceTab {
     this.path,
     this.url,
     this.remotePort = 3000,
+    this.desktopView = false,
   });
 
   final String id;
@@ -17,11 +18,16 @@ class WorkspaceTab {
   final String? url;
   final int remotePort;
 
+  /// When true, the browser tab renders at a fixed desktop width and sends a
+  /// desktop user-agent. Persisted per tab.
+  final bool desktopView;
+
   WorkspaceTab copyWith({
     String? title,
     String? path,
     String? url,
     int? remotePort,
+    bool? desktopView,
   }) {
     return WorkspaceTab(
       id: id,
@@ -30,6 +36,7 @@ class WorkspaceTab {
       path: path ?? this.path,
       url: url ?? this.url,
       remotePort: remotePort ?? this.remotePort,
+      desktopView: desktopView ?? this.desktopView,
     );
   }
 
@@ -40,6 +47,7 @@ class WorkspaceTab {
         if (path != null) 'path': path,
         if (url != null) 'url': url,
         'remotePort': remotePort,
+        'desktopView': desktopView,
       };
 
   factory WorkspaceTab.fromJson(Map<String, dynamic> json) => WorkspaceTab(
@@ -52,5 +60,6 @@ class WorkspaceTab {
         path: json['path'] as String?,
         url: json['url'] as String?,
         remotePort: json['remotePort'] as int? ?? 3000,
+        desktopView: json['desktopView'] as bool? ?? false,
       );
 }

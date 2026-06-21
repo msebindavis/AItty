@@ -178,10 +178,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() => _commandBarReady = true);
-        // Always show the system soft keyboard underneath the workspace —
-        // the cboard (when shown) is an overlay on top of it.
-        setState(() => _forceSoftKeyboard = true);
-        _focusTerminal(showSoftKeyboard: _useTerminalSoftKeyboard);
+        // Don't auto-pop the soft keyboard on mount — the toolbar touch
+        // icon is the only way to bring up the IME. We still focus the
+        // terminal so hardware keyboards work right away.
+        _focusTerminal();
       });
     });
   }
@@ -220,7 +220,8 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     final terminalIds = workspace.terminals.map((p) => p.id).join(',');
     final terminalNames = workspace.terminals.map((p) => p.tmuxSessionName).join(',');
     final auxMeta = workspace.auxTabs
-        .map((t) => '${t.id}:${t.type.name}:${t.title}:${t.path ?? ''}:${t.remotePort}')
+        .map((t) =>
+            '${t.id}:${t.type.name}:${t.title}:${t.path ?? ''}:${t.remotePort}:${t.desktopView}')
         .join(',');
     return '${workspace.aggregateState.index}|${workspace.state.index}|$terminalIds|$terminalNames|'
         '${workspace.auxTabs.length}|$auxMeta|${workspace.activeTabIndex}|${workspace.pendingImagePaths.length}';
@@ -387,8 +388,17 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   Future<void> _handleToolbarAction(TerminalToolbarAction action) async {
     switch (action) {
       case TerminalToolbarAction.touch:
+        // Touch icon is the ONLY entry point that brings up the IME.
+        // Flip _forceSoftKeyboard so hardwareKeyboardOnly drops to false
+        // (otherwise xterm's focusForInput would silently no-op the
+        // keyboard request) and then ask xterm to actually show it.
         if (_useTerminalSoftKeyboard) {
-          _focusTerminal(showSoftKeyboard: true);
+          if (!_forceSoftKeyboard) {
+            setState(() => _forceSoftKeyboard = true);
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _focusTerminal(showSoftKeyboard: true);
+          });
         } else {
           _focusTerminal();
         }
@@ -562,15 +572,13 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     final activeIndex = workspace.activeTabIndex.clamp(0, totalTabs - 1);
     final isTerminalActive = activeIndex < workspace.terminals.length;
 
-    // The terminal toolbar is always rendered inside the Column (sits
-    // right above the keyboard area). The cboard key grid is overlaid on
-    // top of the system soft keyboard. We reserve the cboard's height
-    // PLUS the toolbar's height when the grid is shown — otherwise the
-    // cboard (which is the second Stack child) would render on top of
-    // the toolbar's strip and "hide" it. The toolbar always lives
-    // between the chat UI (command bar) and whichever keyboard is up.
+    // The terminal toolbar and cboard are terminal-tab-only. We reserve
+    // cboard + toolbar height in the bottom inset only when the active
+    // tab is a terminal AND the cboard is shown; otherwise the plain
+    // system keyboard inset applies (used by text fields in non-terminal
+    // tabs like Files / Browser / Git).
     final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
-    final bottomInset = _showCboard
+    final bottomInset = (isTerminalActive && _showCboard)
         ? TerminalKeyboardPanel.cboardHeight + TerminalToolbar.height
         : keyboardInset;
 
@@ -695,10 +703,14 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                           ),
                         // Universal terminal toolbar — sits at the top of
                         // the keyboard area, above Gboard and the cboard.
-                        TerminalToolbar(
-                          onToolbarAction: _handleToolbarAction,
-                          keyboardShown: _forceSoftKeyboard,
-                        ),
+                        // Terminal tabs only; non-terminal tabs (Files,
+                        // Browser, Git) have their own native UI affordances
+                        // and don't need terminal-specific shortcuts.
+                        if (isTerminalActive)
+                          TerminalToolbar(
+                            onToolbarAction: _handleToolbarAction,
+                            keyboardShown: _forceSoftKeyboard,
+                          ),
                       ],
                     ),
                   ),
@@ -706,8 +718,11 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                 // Cboard key-grid overlay — sits on top of the system soft
                 // keyboard. Only the key grid is rendered here (the
                 // toolbar lives in the Column above). Toggled by the
-                // three-dots button in the toolbar.
-                if (_showCboard)
+                // three-dots button in the toolbar, and only ever shown on
+                // terminal tabs (gated on `isTerminalActive` so a stale
+                // `_showCboard` from a previous terminal tab doesn't
+                // re-appear after switching tabs and back).
+                if (isTerminalActive && _showCboard)
                   Positioned(
                     left: 0,
                     right: 0,
@@ -1090,7 +1105,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   Future<void> _addBrowserTab(Workspace workspace) async {
     final setup = await showBrowserUrlDialog(
       context,
-      subtitle: 'Preview a dev server running on the remote host.',
+      subtitle: 'Preview a dev server on the remote host, or open any URL.',
     );
     if (setup == null || !mounted) return;
     _workspaceManager.addAuxTab(
@@ -1098,7 +1113,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       WorkspaceTab(
         id: _uuid.v4(),
         type: WorkspaceTabType.browser,
-        title: ':${setup.remotePort}',
+        title: setup.isLocalForward ? ':${setup.remotePort}' : setup.displayUrl,
         remotePort: setup.remotePort,
         url: setup.displayUrl,
       ),
@@ -1261,7 +1276,6 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
   @override
   Widget build(BuildContext context) {
     final mobile = Platform.isAndroid || Platform.isIOS;
-    final hasSelection = widget.controller.selection != null;
     final terminalStyle = hostTerminalTextStyle.copyWith(
       fontSize: hostTerminalTextStyle.fontSize * widget.fontScale,
     );
@@ -1299,6 +1313,7 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
                     controller: widget.controller,
                     onDragStart: () => setState(() => _isDraggingSelection = true),
                     onDragEnd: () => setState(() => _isDraggingSelection = false),
+                    onCopy: _copySelection,
                     child: TerminalGestureLayer(
                       enabled: true,
                       fontScale: widget.fontScale,
@@ -1326,21 +1341,6 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
                       child: terminalBody,
                     ),
                   ),
-            if (hasSelection)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Material(
-                  elevation: 2,
-                  borderRadius: BorderRadius.circular(4),
-                  color: hostTerminalTheme.background.withValues(alpha: 0.92),
-                  child: IconButton(
-                    icon: Icon(Icons.copy, size: 18, color: hostTerminalTheme.foreground),
-                    tooltip: 'Copy',
-                    onPressed: _copySelection,
-                  ),
-                ),
-              ),
             if (_showScrolly)
               Positioned(
                 top: 16,

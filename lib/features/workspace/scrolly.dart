@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/constants/spacing.dart';
@@ -131,85 +132,98 @@ class _ScrollyState extends State<Scrolly> with SingleTickerProviderStateMixin {
         child: Container(
           width: 44,
           decoration: BoxDecoration(
-            color: ObsidianColors.surfaceContainerHigh.withValues(alpha: 0.85),
+            // Very low alpha so terminal text stays readable right
+            // through the widget. No backdrop blur — blur is what
+            // kills legibility; here we just want a faint glass tint
+            // so the user can see where the scrolly ends.
+            color: ObsidianColors.surfaceContainerHigh.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-            border: Border.all(color: ObsidianColors.outlineVariant.withValues(alpha: 0.5)),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.10),
+              width: 0.5,
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
+                color: Colors.black.withValues(alpha: 0.14),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildButton(
-                icon: Icons.keyboard_arrow_up,
-                onTap: widget.onLineUp,
-                tooltip: 'Line up',
-                isHoldable: true,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildButton(
+                    icon: Icons.keyboard_arrow_up,
+                    onTap: widget.onLineUp,
+                    tooltip: 'Line up',
+                    isHoldable: true,
+                  ),
+                  GestureDetector(
+                    onPanUpdate: (details) {
+                      _resetTimer();
+                      widget.onThumbDrag(details.delta.dy);
+                    },
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      color: Colors.transparent,
+                      child: const Icon(Icons.drag_handle, size: 20, color: ObsidianColors.primary),
+                    ),
+                  ),
+                  _buildButton(
+                    icon: Icons.keyboard_arrow_down,
+                    onTap: widget.onLineDown,
+                    tooltip: 'Line down',
+                    isHoldable: true,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Divider(
+                      height: 1,
+                      color: Colors.white.withValues(alpha: 0.10),
+                    ),
+                  ),
+                  _buildButton(
+                    icon: Icons.keyboard_double_arrow_up,
+                    onTap: widget.onPageUp,
+                    tooltip: 'Page up',
+                    isHoldable: true,
+                  ),
+                  _buildButton(
+                    icon: Icons.keyboard_double_arrow_down,
+                    onTap: widget.onPageDown,
+                    tooltip: 'Page down',
+                    isHoldable: true,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Divider(
+                      height: 1,
+                      color: Colors.white.withValues(alpha: 0.10),
+                    ),
+                  ),
+                  _buildButton(
+                    icon: Icons.vertical_align_top,
+                    onTap: widget.onTop,
+                    tooltip: 'Top',
+                  ),
+                  _buildButton(
+                    icon: Icons.vertical_align_bottom,
+                    onTap: widget.onLive,
+                    tooltip: 'Live',
+                  ),
+                  const SizedBox(height: 8),
+                  _buildButton(
+                    icon: Icons.close,
+                    onTap: widget.onDone,
+                    tooltip: 'Done',
+                  ),
+                ],
               ),
-              GestureDetector(
-                onPanUpdate: (details) {
-                  _resetTimer();
-                  widget.onThumbDrag(details.delta.dy);
-                },
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  color: Colors.transparent,
-                  child: const Icon(Icons.drag_handle, size: 20, color: ObsidianColors.primary),
-                ),
-              ),
-              _buildButton(
-                icon: Icons.keyboard_arrow_down,
-                onTap: widget.onLineDown,
-                tooltip: 'Line down',
-                isHoldable: true,
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Divider(color: ObsidianColors.outlineVariant),
-              ),
-              _buildButton(
-                icon: Icons.keyboard_double_arrow_up,
-                onTap: widget.onPageUp,
-                tooltip: 'Page up',
-                isHoldable: true,
-              ),
-              _buildButton(
-                icon: Icons.keyboard_double_arrow_down,
-                onTap: widget.onPageDown,
-                tooltip: 'Page down',
-                isHoldable: true,
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Divider(color: ObsidianColors.outlineVariant),
-              ),
-              _buildButton(
-                icon: Icons.vertical_align_top,
-                onTap: widget.onTop,
-                tooltip: 'Top',
-              ),
-              _buildButton(
-                icon: Icons.vertical_align_bottom,
-                onTap: widget.onLive,
-                tooltip: 'Live',
-              ),
-              const SizedBox(height: 8),
-              _buildButton(
-                icon: Icons.close,
-                onTap: widget.onDone,
-                tooltip: 'Done',
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
-    );
+        );
   }
 }
