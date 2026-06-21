@@ -18,6 +18,7 @@ class ExtendedKeyboardSheet extends StatefulWidget {
     required this.onPasteCommand,
     required this.onAddSnippet,
     required this.onDeleteSnippet,
+    this.initialTabIndex = 0,
   });
 
   final List<String> history;
@@ -28,6 +29,9 @@ class ExtendedKeyboardSheet extends StatefulWidget {
   final Future<void> Function(String name, String script) onAddSnippet;
   final Future<void> Function(String id) onDeleteSnippet;
 
+  /// 0 = Keys, 1 = History, 2 = Snippets.
+  final int initialTabIndex;
+
   static Future<void> show(
     BuildContext context, {
     required List<String> history,
@@ -37,6 +41,7 @@ class ExtendedKeyboardSheet extends StatefulWidget {
     required ValueChanged<String> onPasteCommand,
     required Future<void> Function(String name, String script) onAddSnippet,
     required Future<void> Function(String id) onDeleteSnippet,
+    int initialTabIndex = 0,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -55,6 +60,7 @@ class ExtendedKeyboardSheet extends StatefulWidget {
           onPasteCommand: onPasteCommand,
           onAddSnippet: onAddSnippet,
           onDeleteSnippet: onDeleteSnippet,
+          initialTabIndex: initialTabIndex,
         ),
       ),
     );
@@ -71,7 +77,11 @@ class _ExtendedKeyboardSheetState extends State<ExtendedKeyboardSheet>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(
+      length: 3,
+      vsync: this,
+      initialIndex: widget.initialTabIndex.clamp(0, 2),
+    );
   }
 
   @override

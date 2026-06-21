@@ -39,6 +39,7 @@ import 'terminal_keyboard/extended_keyboard_sheet.dart';
 import 'terminal_keyboard/terminal_gesture_layer.dart';
 import 'terminal_keyboard/terminal_key_catalog.dart';
 import 'terminal_keyboard/terminal_keyboard_panel.dart';
+import 'terminal_keyboard/terminal_toolbar.dart';
 import 'terminal_theme.dart';
 import 'scrolly.dart';
 import 'terminal_selection_overlay.dart';
@@ -69,6 +70,8 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   String _dictationPrefix = '';
   bool _dictationListening = false;
   bool _forceSoftKeyboard = false;
+  bool _extendedKeyboardOpen = false;
+  bool _showCboard = false;
   double _terminalFontScale = 1;
   List<TerminalSnippet> _snippets = const [];
   late final WorkspaceManager _workspaceManager;
@@ -175,7 +178,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() => _commandBarReady = true);
-        _focusTerminal();
+        // Always show the system soft keyboard underneath the workspace —
+        // the cboard (when shown) is an overlay on top of it.
+        setState(() => _forceSoftKeyboard = true);
+        _focusTerminal(showSoftKeyboard: _useTerminalSoftKeyboard);
       });
     });
   }
@@ -377,23 +383,138 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     if (bytes != null) _sendTerminalBytes(bytes);
   }
 
-  Future<void> _openExtendedKeyboard() async {
-    await ExtendedKeyboardSheet.show(
-      context,
-      history: _commandHistory.recent(limit: 50),
-      snippets: _snippets,
-      onKeyAction: _handleTerminalKeyAction,
-      onRunCommand: _sendCommand,
-      onPasteCommand: _selectHistoryCommand,
-      onAddSnippet: (name, script) async {
-        await ref.read(snippetRepositoryProvider).add(name: name, script: script);
-        await _loadSnippets();
-      },
-      onDeleteSnippet: (id) async {
-        await ref.read(snippetRepositoryProvider).delete(id);
-        await _loadSnippets();
-      },
-    );
+  /// Maps Termius-style toolbar taps to existing app actions.
+  Future<void> _handleToolbarAction(TerminalToolbarAction action) async {
+    switch (action) {
+      case TerminalToolbarAction.touch:
+        if (_useTerminalSoftKeyboard) {
+          _focusTerminal(showSoftKeyboard: true);
+        } else {
+          _focusTerminal();
+        }
+        return;
+      case TerminalToolbarAction.magicWand:
+        await _openExtendedKeyboard(initialTabIndex: 0);
+        return;
+      case TerminalToolbarAction.star:
+        await _openExtendedKeyboard(initialTabIndex: 2);
+        return;
+      case TerminalToolbarAction.braces:
+        await _openExtendedKeyboard(initialTabIndex: 0);
+        return;
+      case TerminalToolbarAction.folder:
+        await _openExtendedKeyboard(initialTabIndex: 1);
+        return;
+      case TerminalToolbarAction.shiftTab:
+        _sendTerminalBytes(TerminalInput.shiftTab());
+        return;
+      case TerminalToolbarAction.settings:
+        if (!mounted) return;
+        context.push('/settings/terminal');
+        return;
+      case TerminalToolbarAction.keyboardHide:
+        _toggleKeyboards();
+        return;
+      case TerminalToolbarAction.more:
+        _toggleCboard();
+        return;
+    }
+  }
+
+  /// ⌨ (keyboard-hide) button duty:
+///   - If Gboard OR cboard is currently shown → hide BOTH at once.
+///   - If both are hidden → bring Gboard back up (cboard stays hidden).
+/// The system keyboard is always the one that returns on unhide.
+  void _toggleKeyboards() {
+    if (!mounted) return;
+    final keyboardVisible = _forceSoftKeyboard;
+    if (keyboardVisible) {
+      // Hide both Gboard and the cboard overlay.
+      setState(() {
+        _showCboard = false;
+        _forceSoftKeyboard = false;
+      });
+      _dismissTerminalInput();
+    } else {
+      // Unhide: system keyboard always comes on top.
+      setState(() {
+        _forceSoftKeyboard = true;
+      });
+      // The TerminalView's `hardwareKeyboardOnly` flips from true→false
+      // here, which re-mounts `CustomTextEdit`. If we call focusForInput
+      // synchronously it still sees the OLD widget value (true) and only
+      // requests focus — never opens the input connection, so the IME
+      // never comes back. Defer to the next frame so the rebuild lands
+      // first, then prime focus + explicitly ask the platform to show
+      // the keyboard (the platform call is the actual fix; focusForInput
+      // alone is not enough after a dispose/re-mount cycle on Android).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _focusTerminal(showSoftKeyboard: _useTerminalSoftKeyboard);
+        if (_useTerminalSoftKeyboard) {
+          SystemChannels.textInput.invokeMethod('TextInput.show');
+        }
+      });
+    }
+  }
+
+  /// ⋯ (three-dots) button duty:
+  ///   - If the cboard is currently up, hide it and restore Gboard.
+///   - If the cboard is NOT up (Gboard up or nothing up), show cboard.
+///   - `forceSoftKeyboard` is kept in sync: showing cboard forces it
+///     true; hiding cboard keeps it true (so Gboard takes over).
+  void _toggleCboard() {
+    if (!mounted) return;
+    final wasCboardShown = _showCboard;
+    setState(() {
+      if (wasCboardShown) {
+        // Cboard → Gboard. Keep forceSoftKeyboard=true so Gboard shows.
+        _showCboard = false;
+        _forceSoftKeyboard = true;
+      } else {
+        // Gboard (or nothing) → cboard. Force forceSoftKeyboard=true so
+        // CustomTextEdit stays in the tree and cboard overlay wins.
+        _showCboard = true;
+        _forceSoftKeyboard = true;
+      }
+    });
+    if (wasCboardShown) {
+      // We just hid the cboard — bring the system keyboard back.
+      _focusTerminal(showSoftKeyboard: _useTerminalSoftKeyboard);
+    } else {
+      // We just brought the cboard in. forceSoftKeyboard just flipped
+      // to true, so the TerminalView will re-mount CustomTextEdit and
+      // its autofocus may try to show Gboard behind the cboard — kill
+      // the input connection so the cboard isn't competing for screen
+      // space.
+      _dismissTerminalInput();
+    }
+  }
+
+  Future<void> _openExtendedKeyboard({int initialTabIndex = 0}) async {
+    if (_extendedKeyboardOpen) return;
+    _extendedKeyboardOpen = true;
+    try {
+      await ExtendedKeyboardSheet.show(
+        context,
+        history: _commandHistory.recent(limit: 50),
+        snippets: _snippets,
+        onKeyAction: _handleTerminalKeyAction,
+        onRunCommand: _sendCommand,
+        onPasteCommand: _selectHistoryCommand,
+        onAddSnippet: (name, script) async {
+          await ref.read(snippetRepositoryProvider).add(name: name, script: script);
+          await _loadSnippets();
+        },
+        onDeleteSnippet: (id) async {
+          await ref.read(snippetRepositoryProvider).delete(id);
+          await _loadSnippets();
+        },
+        initialTabIndex: initialTabIndex,
+      );
+    } finally {
+      _extendedKeyboardOpen = false;
+    }
     if (mounted) await _loadSnippets();
   }
 
@@ -436,6 +557,18 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     final activeIndex = workspace.activeTabIndex.clamp(0, totalTabs - 1);
     final isTerminalActive = activeIndex < workspace.terminals.length;
 
+    // The terminal toolbar is always rendered inside the Column (sits
+    // right above the keyboard area). The cboard key grid is overlaid on
+    // top of the system soft keyboard. We reserve the cboard's height
+    // PLUS the toolbar's height when the grid is shown — otherwise the
+    // cboard (which is the second Stack child) would render on top of
+    // the toolbar's strip and "hide" it. The toolbar always lives
+    // between the chat UI (command bar) and whichever keyboard is up.
+    final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+    final bottomInset = _showCboard
+        ? TerminalKeyboardPanel.cboardHeight + TerminalToolbar.height
+        : keyboardInset;
+
     return Shortcuts(
       shortcuts: _workspaceTerminalShortcuts,
       child: Actions(
@@ -451,112 +584,142 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         child: Focus(
           autofocus: false,
           child: Scaffold(
-      backgroundColor: isTerminalActive ? hostTerminalTheme.background : ObsidianColors.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _WorkspaceTabBar(
-              workspace: workspace,
-              activeIndex: activeIndex,
-              onSelect: (i) => _setActiveTab(i),
-              onCloseTerminal: (pane) => _closeTerminalTab(pane),
-              onCloseAux: (auxIndex) => _closeAuxTab(auxIndex),
-              onPaneOverflow: (pane) => _showPaneOverflow(pane),
-              onBack: _exitWorkspace,
-              onEndWorkspace: _endWorkspace,
-              onAdd: () => _showAddTabMenu(workspace),
-            ),
-            if (workspace.pendingImagePaths.isNotEmpty)
-              _ImagePreviewStrip(
-                paths: workspace.pendingImagePaths,
-                onRemove: (i) => _workspaceManager.removePendingImage(widget.workspaceId, i),
-              ),
-            if (workspace.aggregateState == SessionState.disconnected)
-              Material(
-                color: ObsidianColors.surfaceContainerHigh,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.cloud_off, size: 18, color: ObsidianColors.error),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: Text(
-                          'Connection lost.',
-                          style: AppTypography.inter(size: 13, color: ObsidianColors.error),
+            backgroundColor: isTerminalActive ? hostTerminalTheme.background : ObsidianColors.background,
+            // Don't let the scaffold shrink for the soft keyboard — we want
+            // the Stack to extend all the way to the bottom of the screen
+            // so the cboard can overlap the system keyboard.
+            resizeToAvoidBottomInset: false,
+            body: Stack(
+              children: [
+                // Main content, pushed up by the bottom inset (cboard height
+                // when shown, system keyboard height otherwise).
+                SafeArea(
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: bottomInset),
+                    child: Column(
+                      children: [
+                        _WorkspaceTabBar(
+                          workspace: workspace,
+                          activeIndex: activeIndex,
+                          onSelect: (i) => _setActiveTab(i),
+                          onCloseTerminal: (pane) => _closeTerminalTab(pane),
+                          onCloseAux: (auxIndex) => _closeAuxTab(auxIndex),
+                          onPaneOverflow: (pane) => _showPaneOverflow(pane),
+                          onBack: _exitWorkspace,
+                          onEndWorkspace: _endWorkspace,
+                          onAdd: () => _showAddTabMenu(workspace),
                         ),
-                      ),
-                      TextButton(
-                        onPressed: () => _workspaceManager.reconnect(widget.workspaceId),
-                        child: const Text('Reconnect'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            if (workspace.state == SessionState.reconnecting)
-              Material(
-                color: ObsidianColors.surfaceContainerHigh,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                  child: Row(
-                    children: [
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: ObsidianColors.primary),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      Text(
-                        'Reconnecting…',
-                        style: AppTypography.inter(size: 13, color: ObsidianColors.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            Expanded(
-              child: _terminalReady
-                  ? IndexedStack(
-                      index: activeIndex,
-                      sizing: StackFit.expand,
-                      children: List<Widget>.generate(
-                        totalTabs,
-                        (i) => _buildTab(workspace, i, isActive: i == activeIndex),
-                      ),
-                    )
-                  : ColoredBox(
-                      color: isTerminalActive ? hostTerminalTheme.background : ObsidianColors.background,
-                      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                        if (workspace.pendingImagePaths.isNotEmpty)
+                          _ImagePreviewStrip(
+                            paths: workspace.pendingImagePaths,
+                            onRemove: (i) => _workspaceManager.removePendingImage(widget.workspaceId, i),
+                          ),
+                        if (workspace.aggregateState == SessionState.disconnected)
+                          Material(
+                            color: ObsidianColors.surfaceContainerHigh,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.cloud_off, size: 18, color: ObsidianColors.error),
+                                  const SizedBox(width: AppSpacing.sm),
+                                  Expanded(
+                                    child: Text(
+                                      'Connection lost.',
+                                      style: AppTypography.inter(size: 13, color: ObsidianColors.error),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => _workspaceManager.reconnect(widget.workspaceId),
+                                    child: const Text('Reconnect'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        if (workspace.state == SessionState.reconnecting)
+                          Material(
+                            color: ObsidianColors.surfaceContainerHigh,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                              child: Row(
+                                children: [
+                                  const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: ObsidianColors.primary),
+                                  ),
+                                  const SizedBox(width: AppSpacing.sm),
+                                  Text(
+                                    'Reconnecting…',
+                                    style: AppTypography.inter(size: 13, color: ObsidianColors.onSurfaceVariant),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        Expanded(
+                          child: _terminalReady
+                              ? IndexedStack(
+                                  index: activeIndex,
+                                  sizing: StackFit.expand,
+                                  children: List<Widget>.generate(
+                                    totalTabs,
+                                    (i) => _buildTab(workspace, i, isActive: i == activeIndex),
+                                  ),
+                                )
+                              : ColoredBox(
+                                  color: isTerminalActive ? hostTerminalTheme.background : ObsidianColors.background,
+                                  child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                                ),
+                        ),
+                        if (_commandBarReady && isTerminalActive)
+                          _CommandInputBar(
+                            controller: _commandController,
+                            focusNode: _commandFocusNode,
+                            listening: _dictationListening,
+                            recentCommands: _commandHistory.recent(),
+                            onSend: () => _sendCommand(_commandController.text),
+                            onExpand: () async {
+                              final text = await CommandEditorSheet.show(context, initial: _commandController.text);
+                              if (text != null && text.isNotEmpty) _sendCommand(text);
+                            },
+                            onImage: () => _pickImage(workspace),
+                            onMic: _toggleVoiceDictation,
+                            onSelectHistory: _selectHistoryCommand,
+                          ),
+                        // Universal terminal toolbar — sits at the top of
+                        // the keyboard area, above Gboard and the cboard.
+                        TerminalToolbar(
+                          onToolbarAction: _handleToolbarAction,
+                          keyboardShown: _forceSoftKeyboard,
+                        ),
+                      ],
                     ),
+                  ),
+                ),
+                // Cboard key-grid overlay — sits on top of the system soft
+                // keyboard. Only the key grid is rendered here (the
+                // toolbar lives in the Column above). Toggled by the
+                // three-dots button in the toolbar.
+                if (_showCboard)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: SafeArea(
+                      top: false,
+                      child: TerminalKeyboardPanel(
+                        ctrlActive: _ctrl,
+                        altActive: _alt,
+                        onKeyAction: _handleTerminalKeyAction,
+                        onArrow: _sendArrow,
+                      ),
+                    ),
+                  ),
+              ],
             ),
-            if (_commandBarReady && isTerminalActive) ...[
-              _CommandInputBar(
-                controller: _commandController,
-                focusNode: _commandFocusNode,
-                listening: _dictationListening,
-                recentCommands: _commandHistory.recent(),
-                onSend: () => _sendCommand(_commandController.text),
-                onExpand: () async {
-                  final text = await CommandEditorSheet.show(context, initial: _commandController.text);
-                  if (text != null && text.isNotEmpty) _sendCommand(text);
-                },
-                onImage: () => _pickImage(workspace),
-                onMic: _toggleVoiceDictation,
-                onSelectHistory: _selectHistoryCommand,
-              ),
-              TerminalKeyboardPanel(
-                ctrlActive: _ctrl,
-                altActive: _alt,
-                keyboardActive: _terminalInputActive && _forceSoftKeyboard,
-                onKeyAction: _handleTerminalKeyAction,
-                onArrow: _sendArrow,
-              ),
-            ],
-          ],
-        ),
-      ),
-    ),
+          ),
         ),
       ),
     );

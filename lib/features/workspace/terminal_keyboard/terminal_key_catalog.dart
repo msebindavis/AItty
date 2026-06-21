@@ -47,6 +47,7 @@ enum TerminalKeyAction {
   sendFunction11,
   sendFunction12,
   sendSymbolPipe,
+  sendSymbolExclamation,
   sendSymbolBackslash,
   sendSymbolQuestion,
   sendSymbolMinus,
@@ -145,6 +146,7 @@ abstract final class TerminalKeyCatalog {
     ],
     'Symbols': [
       TerminalKeyDef(action: TerminalKeyAction.sendSymbolPipe, label: '|'),
+      TerminalKeyDef(action: TerminalKeyAction.sendSymbolExclamation, label: '!'),
       TerminalKeyDef(action: TerminalKeyAction.sendSymbolBackslash, label: r'\'),
       TerminalKeyDef(action: TerminalKeyAction.sendSymbolQuestion, label: '?'),
       TerminalKeyDef(action: TerminalKeyAction.sendSymbolMinus, label: '-'),
@@ -217,6 +219,7 @@ abstract final class TerminalKeyCatalog {
         TerminalKeyAction.sendFunction11 => TerminalInput.functionKey(11),
         TerminalKeyAction.sendFunction12 => TerminalInput.functionKey(12),
         TerminalKeyAction.sendSymbolPipe => TerminalInput.symbol('|'),
+        TerminalKeyAction.sendSymbolExclamation => TerminalInput.symbol('!'),
         TerminalKeyAction.sendSymbolBackslash => TerminalInput.symbol(r'\'),
         TerminalKeyAction.sendSymbolQuestion => TerminalInput.symbol('?'),
         TerminalKeyAction.sendSymbolMinus => TerminalInput.symbol('-'),
