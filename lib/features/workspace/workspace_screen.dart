@@ -484,10 +484,15 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     } else {
       // We just brought the cboard in. forceSoftKeyboard just flipped
       // to true, so the TerminalView will re-mount CustomTextEdit and
-      // its autofocus may try to show Gboard behind the cboard — kill
-      // the input connection so the cboard isn't competing for screen
-      // space.
-      _dismissTerminalInput();
+      // its autofocus WILL try to show Gboard behind the cboard. Calling
+      // _dismissTerminalInput() synchronously races the autofocus and
+      // loses — Gboard flashes on for ~1 frame before the dismiss lands.
+      // Defer the dismiss to after the post-frame so it overwrites the
+      // autofocus-driven input connection, leaving only the cboard visible.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _dismissTerminalInput();
+      });
     }
   }
 
