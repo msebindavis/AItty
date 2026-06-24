@@ -23,6 +23,7 @@ import '../../services/snippet_repository.dart';
 import '../../services/workspace_repository.dart';
 import '../../services/workspace_manager.dart';
 import '../../services/tmux_startup.dart';
+import '../../services/app_settings_repository.dart';
 import '../../utils/command_history.dart';
 import '../../utils/route_transition.dart';
 import '../../utils/speech_dictation.dart';
@@ -43,6 +44,7 @@ import 'terminal_keyboard/terminal_keyboard_panel.dart';
 import 'terminal_keyboard/terminal_toolbar.dart';
 import 'terminal_theme.dart';
 import 'scrolly.dart';
+import 'terminal_focus_policy.dart';
 import 'terminal_selection_overlay.dart';
 
 class WorkspaceScreen extends ConsumerStatefulWidget {
@@ -101,6 +103,23 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       _scheduleContentMount();
     });
     _loadSnippets();
+    _loadFontScale();
+  }
+
+  Future<void> _loadFontScale() async {
+    // Pinch-to-zoom font scale is a global default (shared across workspaces).
+    final settings = await ref.read(appSettingsProvider.future);
+    if (!mounted) return;
+    setState(() => _terminalFontScale = settings.fontScale);
+  }
+
+  Future<void> _persistFontScale(double scale) async {
+    // Fire-and-forget: the in-memory state already drives the UI; the disk
+    // write just keeps the value across cold starts.
+    final repo = ref.read(appSettingsRepositoryProvider);
+    final current = await repo.load();
+    if (current.fontScale == scale) return;
+    await repo.save(current.copyWith(fontScale: scale));
   }
 
   @override
@@ -193,7 +212,12 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         // Don't auto-pop the soft keyboard on mount — the toolbar touch
         // icon is the only way to bring up the IME. We still focus the
         // terminal so hardware keyboards work right away.
-        _focusTerminal();
+        // Plain (non-tmux) shells opt out entirely: they have no use for the
+        // IME on touch, and the toolbar icon stays as the explicit entry point.
+        final isPlainShell = _workspace?.activeTerminal?.useTmux == false;
+        if (!isPlainShell) {
+          _focusTerminal();
+        }
       });
     });
   }
@@ -869,7 +893,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         onGestureArrow: _sendArrow,
         onGestureTab: () => _sendTerminalBytes(TerminalInput.tab()),
         onSendBytes: _sendTerminalBytes,
-        onFontScaleChanged: (scale) => setState(() => _terminalFontScale = scale),
+        onFontScaleChanged: (scale) {
+          setState(() => _terminalFontScale = scale);
+          _persistFontScale(scale);
+        },
       );
     }
 
@@ -900,6 +927,11 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     _syncCommandInputPane();
     final workspace = _workspace;
     if (workspace != null && index < workspace.terminals.length) {
+      final pane = workspace.terminals[index];
+      // Plain (non-tmux) shells: never auto-focus the terminal on tab switch.
+      // The toolbar keyboard icon is the only IME entry point; hwkb still
+      // works because the FocusNode stays attached.
+      if (!pane.useTmux) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusTerminal();
       });
@@ -1374,6 +1406,12 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
     final terminalStyle = hostTerminalTextStyle.copyWith(
       fontSize: hostTerminalTextStyle.fontSize * widget.fontScale,
     );
+    final focusPolicy = TerminalFocusPolicy.resolve(
+      isTmux: widget.isTmux,
+      isActive: widget.isActive,
+      forceSoftKeyboard: widget.forceSoftKeyboard,
+      mobile: mobile,
+    );
     final terminalBody = TerminalView(
       widget.terminal,
       key: widget.terminalViewKey,
@@ -1381,8 +1419,8 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
       focusNode: widget.terminalFocusNode,
       theme: hostTerminalTheme,
       textStyle: terminalStyle,
-      autofocus: widget.isActive,
-      hardwareKeyboardOnly: !mobile || !widget.forceSoftKeyboard,
+      autofocus: focusPolicy.autofocus,
+      hardwareKeyboardOnly: focusPolicy.hardwareKeyboardOnly,
       keyboardType: TextInputType.text,
       deleteDetection: mobile,
       simulateScroll: widget.simulateScroll,
@@ -1431,6 +1469,7 @@ class _SessionTerminalPanelState extends State<_SessionTerminalPanel> {
                     onFontScaleChanged: widget.onFontScaleChanged,
                     onSelectWord: (pos) => widget.terminalViewKey?.currentState?.renderTerminal.selectWord(pos),
                     onClearSelection: () => widget.controller.clearSelection(),
+                    absorbTaps: !widget.isTmux,
                     child: Padding(
                       padding: const EdgeInsets.only(bottom: 8.0),
                       child: terminalBody,
