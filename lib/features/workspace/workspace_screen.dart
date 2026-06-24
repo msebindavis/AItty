@@ -36,6 +36,7 @@ import 'command_editor_sheet.dart';
 import 'files_tab.dart';
 import 'git_manager_tab.dart';
 import 'terminal_keyboard/extended_keyboard_sheet.dart';
+import 'terminal_keyboard/arrow_pad.dart';
 import 'terminal_keyboard/terminal_gesture_layer.dart';
 import 'terminal_keyboard/terminal_key_catalog.dart';
 import 'terminal_keyboard/terminal_keyboard_panel.dart';
@@ -75,6 +76,17 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   double _terminalFontScale = 1;
   List<TerminalSnippet> _snippets = const [];
   late final WorkspaceManager _workspaceManager;
+
+  /// Whether the chat-style command input bar is visible. Toggled by
+  /// the new toolbar's chat icon. Defaults to `true` so the bar shows
+  /// on first frame; survives tab switches (state is on the screen,
+  /// not the tab).
+  bool _showCommandBar = true;
+
+  /// Whether the floating arrow pad is currently shown. Mirrors
+  /// [_arrowPadController] — both are toggled by `_toggleArrowPad`.
+  bool _arrowPadOpen = false;
+  final OverlayPortalController _arrowPadController = OverlayPortalController();
 
   @override
   void initState() {
@@ -245,7 +257,15 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     return !_commandBarFocused;
   }
 
-  void _sendTerminalBytes(Uint8List bytes, {bool clearModifiers = true}) {
+  /// Send [bytes] to the active pane.
+  ///
+  /// By default, sticky Ctrl/Alt modifiers **stay** highlighted after
+  /// the send so the user can apply Ctrl to multiple cboard taps
+  /// (^C then ^X without re-tapping Ctrl). Callers that want to clear
+  /// the modifiers (e.g. arrow keys with no active modifier, where the
+  /// user almost certainly didn't intend to leave a sticky Ctrl on)
+  /// pass `clearModifiers: true`.
+  void _sendTerminalBytes(Uint8List bytes, {bool clearModifiers = false}) {
     _sendRaw(bytes);
     if (clearModifiers && (_ctrl || _alt) && mounted) {
       setState(() {
@@ -387,40 +407,30 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   /// Maps Termius-style toolbar taps to existing app actions.
   Future<void> _handleToolbarAction(TerminalToolbarAction action) async {
     switch (action) {
-      case TerminalToolbarAction.touch:
-        // Touch icon is the ONLY entry point that brings up the IME.
-        // Flip _forceSoftKeyboard so hardwareKeyboardOnly drops to false
-        // (otherwise xterm's focusForInput would silently no-op the
-        // keyboard request) and then ask xterm to actually show it.
-        if (_useTerminalSoftKeyboard) {
-          if (!_forceSoftKeyboard) {
-            setState(() => _forceSoftKeyboard = true);
-          }
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _focusTerminal(showSoftKeyboard: true);
-          });
-        } else {
-          _focusTerminal();
-        }
+      case TerminalToolbarAction.esc:
+        _sendTerminalBytes(TerminalInput.esc());
         return;
-      case TerminalToolbarAction.magicWand:
-        await _openExtendedKeyboard(initialTabIndex: 0);
+      case TerminalToolbarAction.tab:
+        _sendTerminalBytes(TerminalInput.tab());
         return;
-      case TerminalToolbarAction.star:
-        await _openExtendedKeyboard(initialTabIndex: 2);
+      case TerminalToolbarAction.toggleCtrl:
+        setState(() => _ctrl = !_ctrl);
         return;
-      case TerminalToolbarAction.braces:
-        await _openExtendedKeyboard(initialTabIndex: 0);
+      case TerminalToolbarAction.arrows:
+        // The arrows button in the toolbar fires the toggle callback
+        // directly; this enum case exists for forward-compat only.
+        _toggleArrowPad();
         return;
-      case TerminalToolbarAction.folder:
-        await _openExtendedKeyboard(initialTabIndex: 1);
+      case TerminalToolbarAction.clipboard:
+        await _pasteFromClipboard();
         return;
-      case TerminalToolbarAction.shiftTab:
-        _sendTerminalBytes(TerminalInput.shiftTab());
+      case TerminalToolbarAction.history:
+        // History is handled inside the toolbar via a PopupMenuButton;
+        // this case is a no-op kept so the enum is exhaustive in tests.
         return;
-      case TerminalToolbarAction.settings:
-        if (!mounted) return;
-        context.push('/settings/terminal');
+      case TerminalToolbarAction.chat:
+        setState(() => _showCommandBar = !_showCommandBar);
+        if (!_showCommandBar) _commandFocusNode.unfocus();
         return;
       case TerminalToolbarAction.keyboardHide:
         _toggleKeyboards();
@@ -429,6 +439,39 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         _toggleCboard();
         return;
     }
+  }
+
+  /// Toggle the floating arrow pad overlay. Mirrors the toggle model
+  /// used by `_toggleCboard` so re-tapping the arrows icon closes the
+  /// pad and the icon's filled/outlined state follows the overlay.
+  void _toggleArrowPad() {
+    if (!mounted) return;
+    setState(() => _arrowPadOpen = !_arrowPadOpen);
+    if (_arrowPadOpen) {
+      _arrowPadController.show();
+    } else {
+      _arrowPadController.hide();
+    }
+  }
+
+  /// Read the system clipboard and write its text into the command
+  /// bar. Empty clipboard shows a 1-second snackbar. Multi-line text
+  /// is preserved as-is — cursor lands at end via [_setCommandText].
+  Future<void> _pasteFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
+    final text = data?.text ?? '';
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Clipboard is empty'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+    _setCommandText(text);
+    _commandFocusNode.requestFocus();
   }
 
   /// ⌨ (keyboard-hide) button duty:
@@ -686,7 +729,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                                   child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
                                 ),
                         ),
-                        if (_commandBarReady && isTerminalActive)
+                        if (_commandBarReady && isTerminalActive && _showCommandBar)
                           _CommandInputBar(
                             controller: _commandController,
                             focusNode: _commandFocusNode,
@@ -710,6 +753,11 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                           TerminalToolbar(
                             onToolbarAction: _handleToolbarAction,
                             keyboardShown: _forceSoftKeyboard,
+                            ctrlActive: _ctrl,
+                            arrowPadOpen: _arrowPadOpen,
+                            onArrowPadToggleRequested: _toggleArrowPad,
+                            onHistoryPicked: _selectHistoryCommand,
+                            recentCommands: _commandHistory.recent(limit: 20),
                           ),
                       ],
                     ),
@@ -736,6 +784,47 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                         onArrow: _sendArrow,
                       ),
                     ),
+                  ),
+                // Floating arrow-pad overlay. Renders the [ArrowPad] on the
+                // nearest [Overlay] when [_arrowPadOpen] is true. A
+                // tap-outside barrier covers the rest of the screen so
+                // tapping anywhere else dismisses the pad. The bubble is
+                // positioned just above the toolbar — over the arrows
+                // button (the 4th of 9 × 48-px buttons, so its center
+                // is at x = 168 px; bubble width is 3 × 56 + 8 = 176, so
+                // `left: 80` centers the bubble on the button).
+                if (isTerminalActive)
+                  OverlayPortal(
+                    controller: _arrowPadController,
+                    overlayChildBuilder: (_) {
+                      final mediaBottom = MediaQuery.of(context).viewPadding.bottom;
+                      return Stack(
+                        children: [
+                          // Tap-outside barrier. Sits below the bubble in
+                          // the Stack so taps on the bubble itself reach
+                          // the bubble's own GestureDetectors.
+                          Positioned.fill(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _toggleArrowPad,
+                            ),
+                          ),
+                          Positioned(
+                            left: 80,
+                            bottom: TerminalToolbar.height + mediaBottom + 12,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: ArrowPad(
+                                controller: _arrowPadController,
+                                onArrow: _sendArrow,
+                                onEnter: () => _sendTerminalBytes(TerminalInput.enter()),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                    child: const SizedBox.shrink(),
                   ),
               ],
             ),
@@ -946,6 +1035,9 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
             _AddTabTile(Icons.bookmark_add_outlined, ObsidianColors.primary, 'Save as template', () {
               Navigator.pop(ctx, _AddTabAction.template);
             }),
+            _AddTabTile(Icons.settings_outlined, ObsidianColors.onSurfaceVariant, 'Terminal settings', () {
+              Navigator.pop(ctx, _AddTabAction.terminalSettings);
+            }),
             const SizedBox(height: AppSpacing.md),
           ],
         ),
@@ -975,6 +1067,9 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         await _renameWorkspace(workspace);
       case _AddTabAction.template:
         await _saveTemplate();
+      case _AddTabAction.terminalSettings:
+        if (!mounted) return;
+        context.push('/settings/terminal');
     }
   }
 
@@ -1705,7 +1800,7 @@ class _ImagePreviewStrip extends StatelessWidget {
   }
 }
 
-enum _AddTabAction { terminal, files, browser, git, rename, template }
+enum _AddTabAction { terminal, files, browser, git, rename, template, terminalSettings }
 
 enum _PaneOverflowAction { rename, end, close }
 
