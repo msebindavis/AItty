@@ -80,10 +80,11 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   late final WorkspaceManager _workspaceManager;
 
   /// Whether the chat-style command input bar is visible. Toggled by
-  /// the new toolbar's chat icon. Defaults to `true` so the bar shows
-  /// on first frame; survives tab switches (state is on the screen,
-  /// not the tab).
-  bool _showCommandBar = true;
+  /// the new toolbar's chat icon. Defaults to `false` so the bar is
+  /// hidden on first frame; the user reveals it with the chat icon
+  /// when they need to type a command. State lives on the screen, not
+  /// the tab, so the choice survives tab switches.
+  bool _showCommandBar = false;
 
   /// Whether the floating arrow pad is currently shown. Mirrors
   /// [_arrowPadController] — both are toggled by `_toggleArrowPad`.

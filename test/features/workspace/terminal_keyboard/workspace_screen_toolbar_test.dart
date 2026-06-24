@@ -17,7 +17,7 @@ class _ToolbarHarness extends StatefulWidget {
 
 class _ToolbarHarnessState extends State<_ToolbarHarness> {
   final _commandController = TextEditingController();
-  bool _showCommandBar = true;
+  bool _showCommandBar = false;
   // Sticky Ctrl mirror of `_WorkspaceScreenState._ctrl`. The harness
   // model is: `toggleCtrl` flips the bool; subsequent "send" actions
   // (here, taps on the clipboard button) do NOT clear it, so the user
@@ -194,15 +194,32 @@ void main() {
         home: _ToolbarHarness(recentCommands: const []),
       ));
       await tester.pumpAndSettle();
-      expect(find.byType(TextField), findsOneWidget);
-
-      await tester.tap(find.byTooltip('Toggle command bar'));
-      await tester.pumpAndSettle();
+      // Default state: command bar is hidden until the chat icon is tapped.
       expect(find.byType(TextField), findsNothing);
 
       await tester.tap(find.byTooltip('Toggle command bar'));
       await tester.pumpAndSettle();
       expect(find.byType(TextField), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Toggle command bar'));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+    });
+
+    testWidgets('command bar is hidden by default on first frame',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: _ToolbarHarness(recentCommands: const []),
+      ));
+      // Pump once (no settle) to mimic the very first frame the user sees.
+      await tester.pump();
+
+      // The chat-style command input bar must not be in the tree until
+      // the user explicitly reveals it with the chat toolbar icon.
+      expect(find.byType(TextField), findsNothing,
+          reason: 'Command bar should be hidden by default');
+      expect(find.byTooltip('Toggle command bar'), findsOneWidget,
+          reason: 'Chat toolbar icon should still be visible');
     });
   });
 }
