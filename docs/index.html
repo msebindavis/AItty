@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AItty — A mobile-first terminal for coding</title>
+  <meta name="description" content="AItty is a mobile-first terminal for coding. SSH into your dev box from your phone and code anywhere — terminal, SFTP, git diff, and multimodal AI input in one workspace.">
+  <meta name="theme-color" content="#10141a">
+
+  <!-- Open Graph / social -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="AItty — A mobile-first terminal for coding">
+  <meta property="og:description" content="SSH into your dev box from your phone and code anywhere — terminal, SFTP, git diff, and multimodal AI input in one workspace.">
+  <meta property="og:image" content="./assets/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AItty — A mobile-first terminal for coding">
+  <meta name="twitter:description" content="SSH into your dev box from your phone and code anywhere.">
+  <meta name="twitter:image" content="./assets/og-image.png">
+
+  <link rel="icon" type="image/png" href="./assets/favicon.png">
+  <link rel="apple-touch-icon" href="./assets/icon.png">
+
+  <!-- Fonts: Inter + JetBrains Mono (Obsidian Deep) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+  <!-- ============ NAV ============ -->
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="#top">
+        <img src="./assets/icon.png" alt="AItty logo">
+        <span>AItty</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="nav-cta">
+        <a class="btn btn-ghost" href="https://github.com/msebindavis/AItty/blob/main/README.md#getting-started">Get started</a>
+        <a class="btn btn-primary" href="https://github.com/msebindavis/AItty" target="_blank" rel="noopener">GitHub</a>
+        <button class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="mobile-menu" id="mobileMenu">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/msebindavis/AItty" target="_blank" rel="noopener">GitHub →</a>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <!-- ============ HERO ============ -->
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <div class="eyebrow">mobile-first · SSH · Flutter</div>
+          <h1>A terminal for coding,<br><span class="grad">from your phone.</span></h1>
+          <p class="lead">AItty SSHes into your remote dev box and gives you a full workspace on the go — terminal, SFTP file browser, an in-app browser over a forwarded port, and git diff, all as tabs. With a thumb-friendly modifier bar, an expandable command editor, and multimodal AI input.</p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/msebindavis/AItty" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 .5A12 12 0 0 0 .5 12.5a12 12 0 0 0 8.2 11.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.8.1-.8.1-.8 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.3-3.2-.1-.3-.6-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5 18 5.3 18 5.3c.7 1.6.2 2.9.1 3.2.8.8 1.3 1.9 1.3 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 23.5 12.5 12 12 0 0 0 12 .5Z"/></svg>
+              View on GitHub
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/msebindavis/AItty/blob/main/README.md#getting-started">Build from source</a>
+          </div>
+          <div class="hero-meta">
+            <span><span class="dot"></span> Android · iOS · macOS · Web</span>
+            <span>MIT licensed</span>
+            <span>Flutter · Riverpod · dartssh2</span>
+          </div>
+        </div>
+        <div class="phone-wrap">
+          <div class="phone">
+            <div class="phone-notch"></div>
+            <img src="./assets/screenshots/terminal.png" alt="AItty terminal with AI input bar on a phone">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FEATURES ============ -->
+    <section id="features">
+      <div class="container">
+        <div class="center" style="margin-bottom:48px;">
+          <div class="eyebrow">features</div>
+          <h2 class="section-title">A pro terminal that fits in your pocket</h2>
+          <p class="section-lead">Not a stripped-down SSH client. AItty treats each host as a workspace — everything you reach for while coding, one tap away.</p>
+        </div>
+        <div class="grid grid-3">
+
+          <article class="card feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m7 9 3 3-3 3M13 15h4" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>
+            </div>
+            <h3>Real SSH terminal</h3>
+            <p>dartssh2 shell + PTY rendered by a patched xterm engine. ANSI color, scrollback, scroll-lock, line wrapping, 60fps target.</p>
+          </article>
+
+          <article class="card feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>
+            </div>
+            <h3>Workspace tabs</h3>
+            <p>Per-host workspaces compose Terminal, SFTP file browser, an in-app browser (over a forwarded port), and a git diff view as switchable tabs.</p>
+          </article>
+
+          <article class="card feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M12 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Thumb-friendly input</h3>
+            <p>A modifier accessory bar puts ESC / CTRL / ALT / TAB / arrows under your thumb. An expandable multi-line editor handles longer commands, plus history.</p>
+          </article>
+
+          <article class="card feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" stroke-linecap="round"/></svg>
+            </div>
+            <h3>Connections dashboard</h3>
+            <p>A live state machine per session — connected, processing, awaiting-input, idle, disconnected — with colored accent bars and a last-output preview line.</p>
+          </article>
+
+          <article class="card feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h10M4 17h16" stroke-linecap="round"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>
+            </div>
+            <h3>SFTP file browser</h3>
+            <p>Browse remote directories with Unix permission strings and sizes, breadcrumb navigation, and a remote start-directory picker for new sessions.</p>
+          </article>
+
+          <article class="card feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3c-3 0-5 2-5 5 0 1 .5 2 1 2.5L8 18h8l0-7.5c.5-.5 1-1.5 1-2.5 0-3-2-5-5-5Z" stroke-linejoin="round"/><path d="M9 21h6" stroke-linecap="round"/></svg>
+            </div>
+            <h3>Multimodal AI input</h3>
+            <p>Attach images from the camera or gallery and dictate with your voice. Multimodal input feeds an assistant pipeline so you can reason about the screen without typing a novel.</p>
+            <div class="tag">in progress</div>
+          </article>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT WORKS ============ -->
+    <section id="how" style="background:var(--surface-lowest); border-top:1px solid var(--outline-variant); border-bottom:1px solid var(--outline-variant);">
+      <div class="container">
+        <div class="center" style="margin-bottom:48px;">
+          <div class="eyebrow">how it works</div>
+          <h2 class="section-title">Three steps to coding on the go</h2>
+        </div>
+        <div class="steps">
+          <div class="step card">
+            <span class="num">01</span>
+            <h3>Add a host</h3>
+            <p>Save your dev box with a password or imported SSH key. Credentials live in OS secure storage — never in plain prefs. Known-host fingerprints are pinned.</p>
+          </div>
+          <div class="step card">
+            <span class="num">02</span>
+            <h3>Open a workspace</h3>
+            <p>Tap to connect over SSH and spin up a workspace. Terminal, files, a forwarded-port browser, and git diff open as tabs — add and switch as you work.</p>
+          </div>
+          <div class="step card">
+            <span class="num">03</span>
+            <h3>Code with AI input</h3>
+            <p>Use the modifier bar for control keys, the expandable editor for longer commands, and snap a screenshot or dictate to feed the AI pipeline.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SCREENSHOTS ============ -->
+    <section id="screenshots">
+      <div class="container">
+        <div class="center" style="margin-bottom:48px;">
+          <div class="eyebrow">screenshots</div>
+          <h2 class="section-title">See it in action</h2>
+          <p class="section-lead">Tap any screen to enlarge.</p>
+        </div>
+        <div class="gallery">
+          <button class="shot" data-src="./assets/screenshots/terminal.png" aria-label="Terminal with AI input"><img src="./assets/screenshots/terminal.png" alt="Terminal with AI input" loading="lazy"></button>
+          <button class="shot" data-src="./assets/screenshots/sessions-dashboard.png" aria-label="Connections dashboard"><img src="./assets/screenshots/sessions-dashboard.png" alt="Connections dashboard" loading="lazy"></button>
+          <button class="shot" data-src="./assets/screenshots/multi-tab.png" aria-label="Multi-tab workspace"><img src="./assets/screenshots/multi-tab.png" alt="Multi-tab workspace" loading="lazy"></button>
+          <button class="shot" data-src="./assets/screenshots/file-browser.png" aria-label="SFTP file browser"><img src="./assets/screenshots/file-browser.png" alt="SFTP file browser" loading="lazy"></button>
+          <button class="shot" data-src="./assets/screenshots/browser-tabs.png" aria-label="Browser tabs"><img src="./assets/screenshots/browser-tabs.png" alt="Browser tabs" loading="lazy"></button>
+          <button class="shot" data-src="./assets/screenshots/image-upload.png" aria-label="Image upload preview"><img src="./assets/screenshots/image-upload.png" alt="Image upload preview" loading="lazy"></button>
+          <button class="shot" data-src="./assets/screenshots/host-management.png" aria-label="Host management"><img src="./assets/screenshots/host-management.png" alt="Host management" loading="lazy"></button>
+          <button class="shot" data-src="./assets/screenshots/add-host.png" aria-label="Add host form"><img src="./assets/screenshots/add-host.png" alt="Add host form" loading="lazy"></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TECH STRIP ============ -->
+    <section style="padding:48px 0;">
+      <div class="container center">
+        <div class="eyebrow">built with</div>
+        <div class="tech" style="margin-top:16px;">
+          <span class="chip">Flutter</span>
+          <span class="chip">Dart</span>
+          <span class="chip">Riverpod</span>
+          <span class="chip">go_router</span>
+          <span class="chip">dartssh2</span>
+          <span class="chip">xterm (vendored fork)</span>
+          <span class="chip">webview_flutter</span>
+          <span class="chip">flutter_secure_storage</span>
+          <span class="chip">speech_to_text</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FAQ ============ -->
+    <section id="faq" style="background:var(--surface-lowest); border-top:1px solid var(--outline-variant);">
+      <div class="container">
+        <div class="center" style="margin-bottom:48px;">
+          <div class="eyebrow">faq</div>
+          <h2 class="section-title">Common questions</h2>
+        </div>
+        <div class="faq">
+          <details>
+            <summary>Is there an app store download?</summary>
+            <p>Not yet. AItty is pre-release and currently build-from-source. Run <code class="mono">flutter build apk</code>, <code class="mono">flutter build ipa</code>, <code class="mono">flutter build web</code>, or <code class="mono">flutter build macos</code> — see the <a href="https://github.com/msebindavis/AItty#getting-started" target="_blank" rel="noopener">README</a>.</p>
+          </details>
+          <details>
+            <summary>Which platforms are supported?</summary>
+            <p>Android, iOS, macOS, and Web (Chrome). The primary target is phones (Android + iOS); tablet and desktop layouts are secondary.</p>
+          </details>
+          <details>
+            <summary>How are my SSH credentials stored?</summary>
+            <p>Through <code class="mono">flutter_secure_storage</code> (the OS keychain/keystore), never in plain preferences or committed files. SSH keys are imported and referenced by handle, and known-host fingerprints are pinned with mismatch warnings.</p>
+          </details>
+          <details>
+            <summary>What's the "vendored xterm" I keep seeing?</summary>
+            <p>AItty ships a patched copy of <a href="https://github.com/TerminalStudio/xterm.dart" target="_blank" rel="noopener">xterm.dart</a> at <code class="mono">packages/xterm</code>, wired in via <code class="mono">dependency_overrides</code>. Terminal-emulator changes happen there. Its license is retained.</p>
+          </details>
+          <details>
+            <summary>Is it free / open source?</summary>
+            <p>Yes — AItty is MIT licensed. See the <a href="https://github.com/msebindavis/AItty/blob/main/LICENSE" target="_blank" rel="noopener">LICENSE</a>. Contributions welcome; read <a href="https://github.com/msebindavis/AItty/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">CONTRIBUTING.md</a>.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CTA ============ -->
+    <section>
+      <div class="container">
+        <div class="cta-band">
+          <h2>Code from anywhere.</h2>
+          <p>Clone AItty, build it, and keep your dev box in your pocket.</p>
+          <div class="hero-actions" style="justify-content:center;">
+            <a class="btn btn-primary" href="https://github.com/msebindavis/AItty" target="_blank" rel="noopener">View on GitHub</a>
+            <a class="btn btn-ghost" href="https://github.com/msebindavis/AItty/blob/main/README.md#getting-started" target="_blank" rel="noopener">Read the docs</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============ FOOTER ============ -->
+  <footer>
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <img src="./assets/icon.png" alt="AItty logo">
+        <span>AItty — a mobile-first terminal for coding</span>
+      </div>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="https://github.com/msebindavis/AItty" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/msebindavis/AItty/blob/main/README.md" target="_blank" rel="noopener">README</a>
+        <a href="https://github.com/msebindavis/AItty/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a>
+        <a href="https://github.com/msebindavis/AItty/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+        <a href="https://github.com/msebindavis/AItty/blob/main/REQUIREMENTS.md" target="_blank" rel="noopener">Spec</a>
+      </nav>
+      <div class="footer-copy">© 2026 msebindavis · MIT · Built with Flutter</div>
+    </div>
+  </footer>
+
+  <!-- ============ LIGHTBOX ============ -->
+  <div class="lightbox" id="lightbox" aria-hidden="true">
+    <button class="lightbox-close" id="lightboxClose" aria-label="Close">&times;</button>
+    <img src="" alt="Screenshot enlarged" id="lightboxImg">
+  </div>
+
+  <script src="./main.js"></script>
+</body>
+</html>
